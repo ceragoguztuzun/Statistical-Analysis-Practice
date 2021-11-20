@@ -1,0 +1,103 @@
+---
+title: "CERAG OGUZTUZUN: Lab 02 for 431"
+author: "CERAG OGUZTUZUN"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: yes
+    code_folding: show
+---
+
+```{r setup, include=FALSE, message = FALSE}
+knitr::opts_chunk$set(comment=NA)
+options(width = 70)
+```
+
+## Setup
+
+```{r load_packages, message = FALSE, warning = FALSE}
+library(tidyverse)
+```
+
+## Import the `lab02_counties.csv` data
+
+```{r}
+lab02_data <- read_csv("data/lab02_counties.csv", show_col_types = FALSE)
+summary(lab02_data)
+nrow(lab02_data)
+```
+
+## First Steps
+# Question 1
+
+I used pipe to get the original dataset (lab02_data) and use the filter function on it which returns the data within the original dataset which qualify the condition of belonging to either states of Ohio (OH), Indiana (IN), Illinois (IL), Michigan (MI), and Wisconsin (WI).
+
+Hence, the resulting dataset is put into a new variable called midwest_data which have only the data where the state variable is OH or IN or IL or MI or WI.
+```{r}
+midwest_data <- lab02_data %>% filter(state == 'OH' | state == 'IN' | state == 'IL' | state == 'MI' | state == 'WI')
+```
+
+
+# Question 2
+
+Within the midwest_data dataset which consists of our states of interests from Q1, I used pipe to apply the count function where the number of counties are displayed as a result.
+```{r}
+midwest_data %>% count(county_name)
+```
+
+# Question 3
+
+In this code, I filtered the midwest_data dataset to get elements where state is Ohio and county name is Cuyahoga Country. From Q2 I can also see that the number of elements with county name is Cuyahoga County is 1. Then, I used the select function to display the state, county_name, some_college and metro values for the filtered result.
+```{r}
+midwest_data %>%
+    filter(state == "OH") %>%
+    filter(county_name == "Cuyahoga County") %>%
+    select(state, county_name, some_college, metro)
+```
+
+# Question 4
+
+I generated a histogram using ggplot2, which shows the percentage of Midwest county residents who have completed some college regarding the number of counties. This histogram can give us insight about the distribution of percentage of Midwest county residents across the number of counties. I provided the labels, used 20 as a bin number and changed fill color to provide better visualization.
+```{r}
+ggplot(midwest_data, aes(x = some_college)) +
+    geom_histogram(bins = 20, col = 'white', fill = "orange") +
+    theme_light() +
+    geom_density() +
+    labs(title = "Percentage of Midwest County Residents Who Have Completed Some College", x = "Percentage of People Who Completed Some College", y = "Number of Counties")
+```
+
+# Question 5
+
+From Q4 we can see observe a normal distribution of people in Midwest counties that have completed some college. From Q3 we see that 69.38% of people in the Cuyahoga County has completed some college. Hence, Cuyahoga County is approximately in the 80th percentile in the plot from Q4 which is above average, so Cuyahoga Country's position relative to the full distribution of counties in terms of completing some college is above average.
+
+# Question 6
+
+I faceted the plot of Percentage of Midwest County Residents Who Have Completed Some College from Q4 with respect to the metro value. The resulting plot I generated is a percentage comparison of residents who have completed some college in or out of metropolitan ares. I used ggplot to generate the plot and used facet_grid function to create two comparable histograms with two different metro values where metro = 1 denoted metropolitan areas and metro = 0 denotes non-metropolitan areas. I added the labels and played with the aesthethics of the plot.
+
+```{r}
+ggplot(midwest_data, aes( x = some_college, fill = metro)) + 
+    geom_histogram( bins = 20, colour = "white")+
+    facet_grid( metro ~ ., labeller = "label_both")+
+    guides( fill = "none") +
+    theme_light() +
+    theme( strip.background = element_rect( fill = "blueviolet"))+
+    labs( title = "Percentage Comparison of Residents Who Have Completed Some College \nIn and Out of Metropolitan Areas", x = "Percentage of People Who Completed Some College", y = "Number of Counties")
+```
+
+# Question 7
+
+From Q3 we see that 69.38% of people in the Cuyahoga County has completed some college and It is a metropolitan area. Within counties that are metropolitan, Cuyahoga County's percentage is approximately within the mean region, which shows that Cuyahoga County's percentage of people who completed some college is average among the metropolitan counties. However we can see a much lower mean value (~60%) of people who completed some college in non-metropolitan counties and the Cuyahoga County's percentage of (69.38%) is way above average and close to the 95th percentile.
+
+# Question 8
+
+In real life, data is not drawn perfectly randomly and does not refer to the population we are interested in perfectly. In order to overcome this, inductive inference consists of a number of steps that lead us to the eventual target of investigation from the raw data. The processes are: questioning if the data is an accurate reflection of our interest by ensuring reliability and validity. This helps us derive a sample from the raw data. Then, interval validity is questioned by looking for ways to eliminate bias to get an accurate reflection of our interesting event in the study group. This helps us derive a study population from the sample. Lastly, to derive the target population external validity is questioned.
+
+Inductive interference can influence our conclusions in this assignment by making us question whether the sample we considered represented the population in states accurately, whether the quantification of the percentage of people who finished some college was conducted in a reliable way, whether our sample is reliable and valid, and whether the eventual target refers to the whole community which will benefit from this analysis.
+
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
+

@@ -1,0 +1,218 @@
+---
+title: "Cerag Oguztuzun: Lab 05 for 431"
+author: "Cerag Oguztuzun"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: yes
+    code_folding: show
+---
+
+```{r setup, include=FALSE, message = FALSE}
+knitr::opts_chunk$set(comment=NA)
+options(width = 70)
+```
+
+
+## Setup
+
+```{r load_packages, message = FALSE, warning = FALSE}
+library(knitr)
+library(palmerpenguins)
+library(janitor)
+library(broom)
+library(magrittr)
+library(naniar)
+library(tidyverse)
+```
+## Import the `lab05_counties.csv` data
+
+```{r}
+lab05_data <- read_csv("data/lab05_counties.csv", show_col_types = FALSE)
+summary(lab05_data)
+nrow(lab05_data)
+```
+
+# PART A
+I used pipe to get the original dataset (lab05_data) and use the filter function on it which returns the data within the original dataset which qualify the condition of belonging to either states of Ohio (OH), Indiana (IN), Illinois (IL), Michigan (MI), and Wisconsin (WI).
+
+Hence, the resulting dataset is put into a new variable called `midwest05` which have only the data where the state variable is OH or IN or IL or MI or WI.
+```{r}
+midwest05 <- lab05_data %>% filter(state == 'OH' | state == 'IN' | state == 'IL' | state == 'MI' | state == 'WI')
+```
+
+I used the select function to display the `state`, `county_name`, `metro` and `access_to_exercise_opportunities` values for the filtered result.
+```{r}
+midwest05 <- midwest05 %>% select(state, county_name, metro, access_to_exercise_opportunities)
+```
+
+Checking if each of the four variables we selected (`state`, `county_name`, `metro`, `access_to_exercise_opportunities`) has missing data for the counties in each state (Ohio (OH), Indiana (IN), Illinois (IL), Michigan (MI), and Wisconsin (WI)) I plan to study. It can be seen that there are no missing values. So, we can continue with the project.
+```{r}
+midwest05 %>% 
+    miss_var_summary()
+```
+
+# Question 1
+
+The variable `access_to_exercise_opportunities` is changed to `exercise_access_percentage` for increased understandability and readability. The `exercise_access_percentage` variable values are converted to percentages that were previously valued between 0 and 1. The categorical variables `state` and `metro` are converted to Factor. Lastly, I printed the structure of my tibble to check the result of my work.
+```{r}
+midwest05 <- midwest05 %>%
+    mutate(state = factor(state)) %>%
+    mutate(metro = factor(metro)) %>%
+    rename(exercise_access_percentage = access_to_exercise_opportunities) %>%
+    mutate(exercise_access_percentage = 100*exercise_access_percentage) %>%
+    mutate(metro = fct_recode(metro,
+                              metropolitan = "1",
+                              non_metropolitan = "0"))
+str(midwest05)
+```
+
+I created a plot which compares the densities of non-metropolitan and metropolitan counties' percent of adults with adequate exercise opportunities. It can be seen that, both densities are left-skewed, but density of percent of adults with adequate exercise opportunities in metropolitan counties are more skewed to the left. This suggests that the mean is smaller than the median for both metropolitan and non metropolitan counties, but median for metropolitan counties are higher. The first result derived is that **More adults in metropolitan counties have adequate access to exercise opportunities than the adults in non-metropolitan counties.**
+```{r}
+midwest05 %>%
+  ggplot(data = ., aes(x = exercise_access_percentage, fill = factor(metro))) +
+  geom_density(alpha = 0.5) +
+  scale_fill_viridis_d() +
+  theme_light() +
+  labs(fill = 'Metropolitan Status', title = "Percent of Adults with Adequate Access to Exercise Opportunities \nStratified by the County’s Metropolitan Status", x = "Percent of Adults with Adequate Exercise Opportunities (%)", y = "Density")
+
+```
+
+# Question 2
+
+The sampling approach used in Question 1 was filtering the whole `lab05_counties.csv` dataset to the five states (Ohio (OH), Indiana (IN), Illinois (IL), Michigan (MI), and Wisconsin (WI)). Hence, every row in `lab05_counties.csv` which has one of the specified states are included in the sample, which results in the `midwest05` dataset. So, this sampling approach is not random, but the whole data the dataset consist that has the specifies states. This is because the analysis is going to be done on the specified states and examining the relationship between the percent of adults with adequate exercise opportunities regarding whether the county is metropolitan or not. The data is from County Health Rankings which should be enough to gain a conclusion within the specified states at least.
+
+# Question 3
+
+The data developed in Question 1 consists of **independent samples**. Because, the samples consist of the `metro` variable of distinct states such that different groups of cases for each county in a state are compared for the same variable `exercise_access_percentage`. However, paired samples compare connected values of groups. Also, we cannot pair a metro or non-metro state with any particular value for `exercise_access_percentage`. Hence, It is an independent sample.
+
+# Question 4
+
+A plot is generated where distributions of each metro or non-metro state regarding `exercise_access_percentage` densities are shown separately, the means for each distribution are marked by a red diamond. From the plot, It can be seen that the distributions are all left-skewed but the means are not very similar.
+
+Metropolitan states has the highest mean of `exercise_access_percentage` distribution. For inferential procedures, we could create a confidence interval by comparing population means of each state through a bootstrap approach. The distributions do not have equal variances, and are not normally distributed as they have skew, hence I can't use a t-test approach. So, I will use a regression model approach with a single predictor.
+
+```{r}
+ggplot(midwest05, aes(x = metro, y = exercise_access_percentage)) +
+  geom_violin(aes(fill = metro)) +
+  geom_boxplot(width = 0.3, outlier.size = 2, notch = T) +
+  stat_summary(fun = 'mean', geom = 'point', shape = 23, size = 3, fill = 'red') +
+  guides(fill = 'none') +
+  scale_fill_viridis_d(alpha = 0.5) +
+  theme_light() +
+  coord_flip() +
+  labs(title = "Percent of Adults with Adequate Access to Exercise Opportunities \nby the Metropolitan Status", y = "Percent of Adults with Adequate Exercise Opportunities (%)", x = "Metropolitan Status")
+```
+
+# Question 5
+I generated a regression model predicting the outcome on `metro` on basis of `exercise_access_percentage` data. I specified the confidence level as 95%. In this analysis, I investigated the metropolitan status of states with variable `exercise_access_percentage`. I deduced that the data consists of independent values as the metropolitan status of a state cannot be defined by a value of `exercise_access_percentage`. I looked at the individual density distribution of each of the metropolitan status regarding their densities in percent of adults with adequate exercise opportunities. From this plot I compared their mean difference and generated a t-test with 95% confidence interval.
+
+
+
+```{r}
+regmodel <- lm(exercise_access_percentage ~ metro, data = midwest05)
+
+tidy(regmodel, conf.int = TRUE, conf.level = 0.95) %>%
+    kable(digits = 3)
+```
+# Question 6
+
+The `exercise_access_percentage ~ metro` population mean difference is estimated as 11.673% of adults with access to exercise opportunities, with the 95% confidence internal which is (8.50, 14.845) percent. So, there is a 11.673% of mean percentage difference of adults with access to exercise opportunities between metropolitan and non-metropolitan counties within 5 selected states. The range of values with 95% confidence that the distribution contains is (8.50, 14.845) percent.
+
+# PART B
+# Question 7
+
+```{r}
+lab05_lind_data <- readRDS("data/lab05_lind.Rds")
+summary(lab05_lind_data)
+nrow(lab05_lind_data)
+```
+I converted types some of the variables which make sense If they were factors which are: `abcix`, `stent`, `female`, `diabetic` and `acutemi`. I renamed them and their factor values as more meaningful names.
+```{r}
+lab05_lind_data <- lab05_lind_data %>%
+    mutate(abcix = factor(abcix)) %>%
+    mutate(abcix = fct_recode(abcix,
+                              PCI_with_abciximab = "1",
+                              only_usual_PCI_care = "0")) %>%
+    rename(treatment_selection_indicator = abcix) %>%
+    
+    mutate(stent = factor(stent)) %>%
+    mutate(stent = fct_recode(stent,
+                              yes = "1",
+                              no = "0")) %>%
+    rename(coronary_stent_deployment = stent) %>%
+    
+    mutate(female = factor(female)) %>%
+    mutate(female = fct_recode(female,
+                              yes = "1",
+                              no = "0")) %>%
+    
+    mutate(diabetic = factor(diabetic)) %>%
+    mutate(diabetic = fct_recode(diabetic,
+                              diagnosed_diabetic = "1",
+                              not_diagnosed_diabetic = "0")) %>%
+      
+    mutate(acutemi = factor(acutemi)) %>%
+    mutate(acutemi = fct_recode(acutemi,
+                              yes = "1",
+                              no = "0")) %>%
+    rename(acute_myocardial_infarction = acutemi)
+    
+    
+str(lab05_lind_data)
+```
+
+
+The `treatment_selection_indicator` and `acutemi` are paired values, as their values depend on each others' calculation. Hence, I built a 90% two-sided confidence interval regarding the population mean differences of relative risk of an `acutemi` for those receiving `abciximab` compared to those receiving usual care. The confidence interval is (1.68, 1.72), meaning It is the population mean difference between those receiving `abciximab` compared to those receiving usual care by the t-test.
+
+```{r}
+tt1 <- lab05_lind_data %$% t.test(as.numeric(treatment_selection_indicator), conf.level = 0.90, 
+                            alt = "two.sided")
+
+tidy(tt1) %>% knitr::kable(digits = 2)
+```
+
+# Question 8
+
+The `diabetic` and `acutemi` are paired values, as their values depend on each others' calculation. Hence, I built a 90% two-sided confidence interval regarding the population mean differences of relative risk of an `acutemi` for those diagnosed with diabetes compared to those not diagnosed with diabetes. The confidence interval is (1.68, 1.72), meaning It is the population mean difference between those receiving `abciximab` compared to those diagnosed with diabetes compared to those not diagnosed with diabetes by the t-test.
+
+```{r}
+tt1 <- lab05_lind_data %$% t.test(as.numeric(diabetic), conf.level = 0.90, 
+                            alt = "two.sided")
+
+tidy(tt1) %>% knitr::kable(digits = 2)
+```
+
+# Question 9
+
+- 405 were predicted to survive at least 6 months, and actually survived at least 6 months 
+
+The value 405 indicates the True Positives (`TP`) for the model.
+
+- 74 were predicted not to survive at least 6 months, but did actually survive at least 6 months
+
+The value 74 indicates the False Negatives (`FN`) for the model.
+
+- 9 were predicted not to survive at least 6 months and did not actually survive at least 6 months.
+
+The value 9 indicates the True Negatives (`TN`) for the model.
+
+495 - ( 405 + 74 + 9 ) = 7 is the resulting False Positives (`FP`) such that 7 were predicted to survive at least 6 months and did not actually survive at least 6 months.
+
+Actual / Predicted | Survived | Not Survived
+--------- | ---------- | --------------------------------------
+Survived | 405 | 7
+Not Survived | 74 | 9
+
+
+Accuracy is ( TP + TN ) / ( TP + TN + FP + FN ) = 0.83
+
+Sensitivity is ( TP ) / ( TP + FN ) = 0.84
+
+Specificity is ( TN ) / ( TN + FP ) = 0.56
+
+# Session Information
+
+```{r}
+sessioninfo::session_info()
+```

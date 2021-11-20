@@ -1,0 +1,206 @@
+---
+title: "Cerag Oguztuzun: Lab 07 for 431"
+author: "Cerag Oguztuzun"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: yes
+    code_folding: show
+---
+
+```{r setup, include=FALSE, message = FALSE}
+options(warn=-1)
+knitr::opts_chunk$set(comment=NA)
+options(width = 70)
+```
+
+## Setup
+
+```{r load_packages, message = FALSE, warning = FALSE}
+library(car)
+library("readxl")
+library(knitr)
+library(rmdformats)
+library(equatiomatic)
+library(patchwork)
+library(janitor)
+library(magrittr)
+library(dplyr)
+library(naniar)
+library(broom)
+library(tidyverse)
+```
+
+## Question 1
+
+The excel file which consists of the data is read and the tibble is formed by mutating the data such that `partner` and `group` are factors and `age`, `sbp_baseline` and `sbp_follow` are numeric types. The types of variables are checked using the `glimpse` function. Later, the `miss_var_summary` function is used to assess any missing values, but from the output, It seems that there aren't any missing values.
+
+Additionally using `tabyl` It is displayed that percentage of patients in each group is equal, which is 0.33% and there are 100 patients in each group. I looked at the distributions of variables `partner`, `age`, and `sbp_baseline` within each group using the `tabyl` function. For each group we see a 3 to 1 ratio, in each group there are 3 times more patients with a partner with hypertension than there are without hypertension, which means this variable is not very comparable. I can see that `age` is very well distributed within 3 groups, among ages between 55 to 65. `age` is comparable among groups. Lastly, `sbp_baseline` are distributed well but not perfect, because there are many cases where some groups do not have a `sbp_baseline` of a value, while other groups do. This suggests the distribution is not perfect.
+```{r}
+lab07_trial <- read_excel("data/lab07_trial.xls")
+lab07_trial
+```
+```{r}
+lab07_trial <- lab07_trial %>%
+    mutate(partner = factor(partner),
+           group = factor(group),
+           age = as.numeric(age),
+           sbp_baseline = as.numeric(sbp_baseline),
+           sbp_follow = as.numeric(sbp_follow))
+glimpse(lab07_trial)
+```
+
+```{r}
+lab07_trial %>% 
+    miss_var_summary()
+```
+
+```{r}
+lab07_trial %>% tabyl(group)
+```
+
+```{r}
+lab07_trial %>% tabyl(group, partner) %>% adorn_totals("row")
+lab07_trial %>% tabyl(group, age) %>% adorn_totals("row")
+lab07_trial %>% tabyl(group, sbp_baseline) %>% adorn_totals("row")
+```
+
+
+
+## Question 2
+
+To investigate whether the outcome variable `sbp_follow` can be modeled appropriately with a Normal distribution, a density plot and a Normal Q-Q plot are created. The density plot majorly looks like a bell-shaped curve of Normal distribution and we can see from the Normal Q-Q plot that the points majorly fit the diagonal line which suggests the distribution is normal. However, we can see some skew in the Normal Q-Q plot that resembles a uniform distribution, which shows itself in the density plot with a thick curve shape. To sum up, the outcome variable can be modeled with a Normal distribution well.
+```{r}
+p1 <- ggplot(lab07_trial, aes(x = sbp_follow)) +
+    geom_density( fill = "#c8a2c8", 
+                   col = "white") +
+    theme_light() +
+    labs(title = "Histogram with Normal fit", 
+         x = "Subject’s follow-up Systolic \nBlood Pressure (mm Hg)", y = "Density")
+
+
+p2 <- ggplot(lab07_trial, aes(sample = sbp_follow)) +
+    geom_qq(col = "#c8a2c8") + 
+    geom_qq_line(col = "black") +
+    theme_light() +
+    
+    labs(title = "Normal Q-Q plot",
+         y = "Subject’s follow-up Systolic \nBlood Pressure (mm Hg)",
+         x = 'z scores')
+
+
+p1 + p2 + plot_layout(ncol =2, height = c(55, 1)) +
+    plot_annotation(title = "Systolic Blood Pressure follow-up Normality Assumption Assesment")
+```
+
+
+## Question 3
+
+The ANOVA assumptions are that the data is normally distributed, consisted of independent observations, has equal variance among groups. To assess these assumptions regarding the `lab07_trial` data, a violin plot is created where the dot represents the mean within each group. Assessing normality, we can see that the median is very close to the mean for each group, only group 2's violin suggests the distribution for group 2 is a little right skewed as the mean is greater than the median slightly. Their variance is approximately the same regarding that the length of violins in the axis `subject’s follow-up systolic \nblood pressure (mm Hg)` are approximately equal. Also, the data from each group is independent. To sum up, this violin plot is in favor of using ANOVA to compare the SBP at follow-up means across the three treatment groups.
+```{r}
+ggplot(lab07_trial, aes(x = group, y = sbp_follow)) +
+    theme_light() +
+    geom_violin(aes(fill = group)) +
+    geom_boxplot(width = 0.3, outlier.size = 3) +
+    stat_summary(aes(fill = group), fun = mean, 
+                 geom="point", pch = 21, size = 4) + 
+    guides(fill = "none") + 
+    coord_flip() +
+    labs(title = "Follow-up Systolic Blood Pressure Regarding Groups", 
+         subtitle = 'Dots are representing means for each group.',
+         x = "Group Number", y = "Subject’s follow-up Systolic \nBlood Pressure (mm Hg)")
+```
+
+## Question 4
+
+I will be using eta-squared which is an equivalent to R squared to assess this model. Using `η² = SS(Factor) / SS(Total)`, with SS(Factor) being SS(group) = 13779 and SS(Total) = SS(group) + SS(Residuals) = 13779 + 25518 = 39297. η² = 13779 / 39297 = 0.35064. This means `group` category accounts for 35% of variance in `sbp_follow`, which is a significant fraction, hence pairwise comparison will be done. 
+
+Also, Square root of Mean Square Residual value is the residual standard error which is √(85.91832) = 9.270.
+```{r}
+model4 <- lm(sbp_follow ~ group, data = lab07_trial, conf.level = 0.90)
+anova(model4) %>% kable(digits = 5)
+```
+
+TukeyHSD is used to assess pairwise confidence intervals and p values. We can see that p values for each group is very small which means the R squared values are statistically significant for each group. Additionally the confidence intervals do now include 0, which suggests the mean differences of each group of `sbp_follow` data of patients are statistically significant.
+```{r}
+TukeyHSD(aov(sbp_follow ~ group, data = lab07_trial, conf.level = 0.90))
+plot(TukeyHSD(aov(sbp_follow ~ group, data = lab07_trial), conf.level = 0.90))
+title(ylab="Group Number Comparisons")
+```
+
+## Question 5
+
+Using `η² = SS(Factor) / SS(Total)`, with SS(Factor) being SS(group) = 13778.6 and SS(Total) = SS(group) + SS(sbp_baseline) + SS(Residuals) = 13778.6 + 28 + 25489.7 = 39296.3. η² = 13778.6 / 39296.3 = 0.35. This means `group` category accounts for 35% of variance in `sbp_follow`, which is a significant fraction.
+
+Doing the same calculation for SS(Factor) being SS(sbp_baseline) = 28. η² = 28 / 39296.3 = 0.0007. So, `sbp_baseline` accounts for 0.07% of variance in `sbp_follow`, which is very small. This suggests incorporating baseline SBP levels did not account for much difference in variance in the model. Square root of Mean Square Residual value is the residual standard error which is √(86.11396) = 9.280. 
+```{r}
+model5 <- lm(sbp_follow ~ group + sbp_baseline, data = lab07_trial, conf.level = 0.90)
+anova(model5) %>% kable(digits = 5)
+```
+
+## Question 6
+
+The square root of Mean Square Residual value is the residual standard error which is √(86.39563) = 9.295. We can see a small increase in variance estimate from other models, which can mean the fit quality is slightly decreasing with the incorporation of variables `partner` and `sbp_baseline`.
+
+Using `η² = SS(Factor) / SS(Total)`, with SS(Factor) being SS(group) = 13778.6 and SS(Total) = SS(group) + SS(sbp_baseline) + SS(partner) + SS(Residuals) = 13778.6 + 28 + 3 + 25489.7 = 39299.3. η² = 13778.6 / 39299.3 = 0.35. This means `group` category accounts for 35% of variance in `sbp_follow`, which is a significant fraction. Similarly `sbp_baseline` accounts for 28 / 39299.3 = 0.0007, 0.07% of variance, and `partner` accounts for 3 / 39299.3 = 0.00007, 0.007% of the variance, which is too small to explain any variance. 
+
+
+```{r}
+model6 <- lm(sbp_follow ~ group + sbp_baseline + partner, data = lab07_trial, conf.level = 0.90)
+anova(model6) %>% kable(digits = 5)
+```
+## Question 7
+
+
+The square root of Mean Square Residual value is the residual standard error which is √(86.08883) = 9.278. We can see a decrease in variance estimate from other models, which can mean the fit quality is slightly increasing with the incorporation of `age`.
+
+Using `η² = SS(Factor) / SS(Total)`, where SS(Total) = SS(group) + SS(sbp_baseline) + SS(partner) + SS(age) + SS(Residuals) = 13778.6 + 28 + 3 + 176.6 + 25310.1 = 39296.3. η² = 13778.6 / 39296.3 = 0.35. This means `group` category accounts for 35% of variance in `sbp_follow`, which is a significant fraction. 
+
+Similarly `sbp_baseline` accounts for 28 / 39296.3 = 0.0007, 0.07% of variance, `partner` accounts for 3 / 39296.3 = 0.00007, 0.007% of the variance, which is too small to explain any variance. `age` accounts for 176.6 / 39296.3 = 0.0045, 0.45% of the variance. Hence, including the `age` variable improved the p values, as well as the quality of fit and enabling statistically significant variation account in the model.
+
+
+```{r}
+model7 <- lm(sbp_follow ~ group + sbp_baseline + partner + age, data = lab07_trial, conf.level = 0.90)
+anova(model7) %>% kable(digits = 5)
+```
+
+### Model 4
+
+Examining the R square value is giving the idea about how much of the variation `sbp_follow` can be explained by taking `group` into account. It is 0.35063 and the adjusted R squared value is 0.34626, which suggests the fit is good as the model only explains approximately 35% of the variation within the data. Additionally AIC is 2192.367 and BIC is 2207.182 which are very high, this means the inclusion of the variable did not yield a good outcome for this model, however these values make more sense when they are compared, which will be done in the Overall Comparison section. Sigma value is about 9.27 which indicates the 95% of the errors made by `model4` is within the interval -18.52 to 18.52.
+
+```{r}
+glance(model4) %>% kable(digits = 5)
+```
+### Model 5
+
+Examining the R square value is giving the idea about how much of the variation `sbp_follow` can be explained by taking the predictor variables `group` and `sbp_baseline` into account. It is 0.35135 and the adjusted R squared value is 0.34477, which suggests the fit is okay, but It explains slightly more variation in the data than `model4` did. Additionally AIC is 2194.038 and BIC is 2212.557 which are very high, this means the inclusion of the variable did not yield a good outcome for this model. But, we can also see an increase from the values of `model4`. Sigma value is about 9.28 which indicates the 95% of the errors made by `model4` is within the interval -18.56 to 18.56, which is a slightly greater interval than `model4`'s.
+
+```{r}
+glance(model5) %>% kable(digits = 5)
+```
+### Model 6
+
+R square value is giving the idea about how much of the variation `sbp_follow` can be explained by taking the predictor variables `group`, `sbp_baseline` and `partner` into account. It is 0.35142 and the adjusted R squared value is 0.34263, which suggests the fit is okay but It is very slightly better than `model5`’s R square values, which means we see an improvement with adding these predictor variables such that the model can explain more of the variation within the data. Additionally AIC is 2196.002 and BIC is 2218.225 which are very high, this means the inclusion of the variable did not yield a good outcome for this model, we also see an increase from the values from `model5`. We can also see that the interval derived from the sigma value is greater than other models', which is between -18.58 to 18.58. This interval indicates the 95% of the errors are made within these values.
+
+```{r}
+glance(model6) %>% kable(digits = 5)
+```
+### Model 7
+
+R square value is giving the idea about how much of the variation `sbp_follow` can be explained by taking the predictor variables `group`, `sbp_baseline`, `partner` and `age` into account. It is 0.35592 and the adjusted R squared value is 0.34496, which suggests the fit is okay. This time we see a better improvement in the R squared value, which means we see an improvement with adding `age` as a predictor variable such that the model can explain more of the variation within the data. Additionally, AIC is 2195.916 and BIC is 2221.843. This time we are able to see an improvement (decrease in AIC and BIC values) from the values from `model5`. We can also see that the interval derived from the sigma value is narrower than other models, which is between -18.54 to 18.54. This interval indicates that 95% of the errors are made within these values.
+
+```{r}
+glance(model7) %>% kable(digits = 5)
+```
+### Overall Comparison
+The best model is `model7` which has the greatest R squared and Adjusted R squared values among other models, meaning this model can explain more variance than other models do. The sigma value is the smallest, which means that majority of the errors are made in a narrower interval than It is for other models. Additionally, AIC and BIC values are the smallest for `model7`. We can conclude that `age` was a successful predictor variable for `sbp_follow`, as It improved the model and distinguished `model7` from other models studied in this analysis.
+
+## Question 8
+
+In the ANOVA table outputs of the models, we were given the two-sided P-value under the `pr(>|t|)` column. This corresponded to the fact that the probability of getting either a positive or negative large t-value under the null hypothesis is 0. According to Spiegelhalter's book, the two-sided P-value could be interpreted following confidence intervals. If the 95% confidence interval does not include the null hypothesis the P-value is less than 0.05 where the confidence interval has consisted of the hypotheses which are not rejected when the P-value is smaller than 0.05. This tells me that confidence intervals are related to the R squared value which is a metric of how much the variation in an outcome variable can be explained by taking the predictor variable into account. The P-value can test whether an R squared value is significant, and It will be a small value for a model with a good fit.
+
+# Session Information
+```{r}
+sessioninfo::session_info()
+```
+

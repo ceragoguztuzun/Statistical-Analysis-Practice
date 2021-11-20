@@ -1,0 +1,816 @@
+---
+title: "Health and Educational Factors Contributing to Violent Crime Rate"
+subtitle: "The Study is done across the East Coast, Midwest, and the West Coast States"
+author: "Cerag Oguztuzun"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    highlight: kate
+    number_sections: TRUE
+    toc_depth: 3
+    code_folding: show
+    
+---
+# Preliminaries
+
+
+## My R Packages
+
+```{r load_packages_here, message = FALSE}
+library(knitr)
+library(rmdformats)
+library(equatiomatic)
+library(patchwork)
+library(car)
+library(janitor)
+library(magrittr)
+library(dplyr)
+library(naniar)
+library(broom)
+library(tidyverse)
+
+options(warn=-1)
+opts_chunk$set(comment=NA)
+opts_knit$set(width=75)
+```
+
+## Data Ingest
+
+Data about states is imported, the first line is skipped and the data types of variables are guessed using the first 4000 rows in the data.
+
+```{r read_in_data_here, message = FALSE}
+data_url <- "data/analytic_data2021.csv"
+chr_2021_raw <- read_csv(data_url, skip = 1, guess_max = 4000)
+```
+
+
+# Data Development
+
+## Selecting My Data
+`county_ranked` variable is 1 and only the states have chosen are displayed. The chosen states are California, Oregon, Ohio, Michigan, Florida, and South Carolina. The variables are renamed for improved readability. The `limited_access_to_healthy_foods` and `insufficient_sleep` variables are converted to percentages that were previously valued between 0 and 1. Then, rows that consisted of missing values are removed from the dataset. 
+
+```{r}
+chr_2021 <- chr_2021_raw %>%
+    filter(county_ranked == 1) %>%
+    filter(state %in% c("CA", "OR", "OH", "MI", "FL", "SC")) %>%
+    select(fipscode, state, county, 
+           v043_rawvalue, v159_rawvalue, v160_rawvalue, v083_rawvalue, v143_rawvalue) %>%
+    rename(violent_crime = v043_rawvalue,
+           reading_scores = v159_rawvalue,
+           math_scores = v160_rawvalue,
+           limited_access_to_healthy_foods = v083_rawvalue,
+           insufficient_sleep = v143_rawvalue) %>%
+    mutate(limited_access_to_healthy_foods = 100*limited_access_to_healthy_foods,
+           insufficient_sleep = 100*insufficient_sleep)
+
+```
+
+
+## Repairing the `fipscode` and factoring the `state`
+
+`fipscode` variable is converted to a character variable from a double-precision numeric variable, in order to avoid confusion regarding the numeric value of fipscode is not a meaningful number. Also, the `state` variable is converted to a factor variable from a character variable. 
+
+```{r}
+chr_2021 <- chr_2021 %>%
+    mutate(fipscode = str_pad(fipscode, 5, pad = "0"),
+           state = factor(state))
+```
+
+
+### Checking Initial Work
+
+
+```{r}
+glimpse(chr_2021)
+```
+
+Checking the data coverage within states. There seems to be a good distribution between states of Midwest, East Coast, and West Coast, which serves my hypothesis of investigating and comparing each of these areas well.
+
+```{r}
+chr_2021 %>% tabyl(state) %>% adorn_pct_formatting() 
+```
+
+
+
+## Creating Binary Categorical Variables
+
+The `limited_access_to_healthy_foods` variable will be turned into a binary variable. `low` and `high` will indicate the percentage of the population who are low-income and do not live close to a grocery store as a binary variable, which is divided at a value that splits two categories as evenly as possible using cut2 from Hmisc.
+
+```{r, message = FALSE}
+chr_2021 <- chr_2021 %>%
+    mutate(temp3_cut2 = factor(Hmisc::cut2(limited_access_to_healthy_foods, g = 2)))
+
+mosaic::favstats(limited_access_to_healthy_foods ~ temp3_cut2, data = chr_2021) %>% 
+    kable(digits = 3)
+```
+
+Names of numerical intervals are changed as `high` and `low` to improve readability.
+
+```{r, message = FALSE}
+chr_2021 <- chr_2021 %>%
+    mutate(temp3_cut2 = factor(Hmisc::cut2(limited_access_to_healthy_foods, g = 2)),
+           temp4_newnames = fct_recode(temp3_cut2,
+                                         low = "[0.0213, 6.85)",
+                                         high = "[6.8482,31.10]"))
+
+mosaic::favstats(limited_access_to_healthy_foods ~ temp4_newnames, data = chr_2021) %>% 
+    kable(digits = 3)
+```
+
+
+### Cleaning up
+
+`temp3_cut2` variable displays the value intervals which are represented in the `temp4_newnames` column as a binary variable. Column `temp3_cut2` is deleted and `temp4_newnames` column is renamed as `limited_access_to_healthy_foods_cat`
+```{r}
+chr_2021 <- chr_2021 %>%
+    rename(limited_access_to_healthy_foods_cat = temp4_newnames) %>%
+    select(-c(temp3_cut2))
+```
+
+## Creating Multi-Category Variables
+
+### Creating a Three-Category Variable
+
+The `insufficient_sleep` variable is converted to a three-category variable using cut2 from Hmisc package. Each group have equal size and values `top`, `bottom` and `middle` values categorize the percentage of adults who report fewer than 7 hours of sleep on average.
+
+```{r, message = FALSE}
+chr_2021 <- chr_2021 %>%
+    mutate(temp3 = factor(Hmisc::cut2(insufficient_sleep, g = 3)))
+
+mosaic::favstats(insufficient_sleep ~ temp3, data = chr_2021) %>% 
+    kable(digits = 3)
+```
+
+```{r, message = FALSE}
+chr_2021 <- chr_2021 %>%
+    mutate(insufficient_sleep_cat = fct_recode(temp3,
+                                               bottom = "[28.6,37.4)",
+                                               middle = "[37.4,40.0)",
+                                               top = "[40.0,45.4]"))
+
+mosaic::favstats(insufficient_sleep ~ insufficient_sleep_cat, data = chr_2021) %>% 
+    kable(digits = 3)
+```
+
+
+### Cleaning up
+
+The `temp3` variable created in this process is deleted from the dataset.
+ 
+```{r}
+chr_2021 <- chr_2021 %>%
+    select(-c(temp3))
+```
+
+
+## Structure of My Tibble
+
+The structure of the tibble is printed. Dimensions of the tibble are displayed. The data type of each of the variables is displayed as we converted them. The categorical variables we created are Factor typed as anticipated. `state` is converted to Factor and `fipscode` is converted to character types as indicated above.
+
+```{r}
+chr_2021
+```
+
+
+# Codebook
+
+Variable | Description
+--------- | ------------------------------------------------
+fipscode | FIPS code
+state | State: my six states are CA, OR, OH, MI, FL, SC
+county | County Name
+violent_crime | (v043) Violent crime raw value, which will be my **outcome**
+reading_scores | (v159) Reading scores raw value
+math_scores | (v160) Math scores raw value
+limited_access_to_healthy_foods | (v083) Limited access to healthy foods raw value
+insufficient_sleep | (v143) Insufficient sleep raw value
+limited_access_to_healthy_foods_cat | 2 levels: low = limited_access_to_healthy_foods below 6.77%, or high
+insufficient_sleep_cat | 3 levels: bottom = insufficient_sleep below 37.5%, middle or top = 40% or above
+
+- `fipscode` is the 5-digit FIPS Code.
+
+- `state` is the state abbreviation.
+
+- `county` is the county or state name.
+
+- `violent_crime` was originally variable `v043_rawvalue`. It is listed in the Community Safety subcategory under Social & Economic Factors at County Health Rankings. It describes the number of reported violent crime offenses per 100,000 population. Measures are based on the Uniform Crime Reporting and FBI from 2014 and 2016. This will be the **outcome** variable.
+
+- `reading_scores` was originally variable `v159_rawvalue` It is listed in the Education subcategory under Social & Economic Factors at County Health Rankings. It describes the average grade level performance for 3rd graders on English Language Arts standardized tests. Measures are based on the Stanford Education Data Archive from 2018.
+
+- `math_scores` was originally variable `v160_rawvalue` It is listed in the Education subcategory under Social & Economic Factors at County Health Rankings. It describes the average grade level performance for 3rd graders on math standardized tests. Measures are based on the Stanford Education Data Archive from 2018.
+
+- `limited_access_to_healthy_foods` was originally variable `v083_rawvalue` It is listed in the Health Behaviors, Diet and Exercise subcategory under Health Factors at County Health Rankings. It describes the percentage of the population who are low-income and do not live close to a grocery store. Measures are based on the USDA Food Environment Atlas from 2015.
+
+- `insufficient_sleep` was originally variable `v143_rawvalue` It is listed in the Health Behaviors, Other Health Behaviors subcategory under Health Factors at County Health Rankings. It describes the percentage of adults who report fewer than 7 hours of sleep on average. Measures are based on the Behavioral Risk Factor Surveillance System from 2018.
+
+- `limited_access_to_healthy_foods_cat` is the version of `limited_access_to_healthy_foods` which is converted to a binary variable. `high` means 6.77% or higher percentage of the population who are low-income and do not live close to a grocery store. `low` means lower than 6.77% percentage of the population who are low-income and do not live close to a grocery store. 6.77% is chosen as It is the threshold that splits two categories as evenly as possible.
+
+- `insufficient_sleep_cat` is the version of `insufficient_sleep` which is converted to a 3-category variable. `top` means 40% or higher percentage of adults who report fewer than 7 hours of sleep on average. `bottom` means lower than 37.5% percentage of adults who report fewer than 7 hours of sleep on average and `middle` represents the values between 40% and 37.5%. The values are chosen as they are the thresholds that split three categories as evenly as possible.
+
+
+## Proposal Requirement 1 
+
+I selected the states California which has 58 counties and Oregon which has 35 counties from the West Coast States, Ohio has 88 counties and Michigan that has 83 counties from the Midwest States and Florida that has 67 states and South Carolina that has 46 counties from the East Coast States which adds up to 377 counties that will be studied in this Project. I chose 2 states from each of 3 regions which are the West Coast, Midwest, and East Coast, in order to be able to compare the population living in these regions regarding the causes of violent crimes.
+
+States | Number of Counties | Reason of Selection
+--------- | ------------ | --------------------
+California | 58 | selected as a state to represent the **West Coast** states
+Oregon | 35 | selected as a state to represent the **West Coast** states
+Ohio | 88 | selected as a state to represent the **Midwest** states
+Michigan | 83 | selected as a state to represent the **Midwest** states
+Florida | 67 | selected as a state to represent the **East Coast** states
+South Carolina | 46 | selected as a state to represent the **East Coast** states
+Total | 377 | 
+
+
+## Proposal Requirement 2
+
+- `violent_crime` was originally variable `v043_rawvalue`. Investigating the elements that affect the violent crime rate is worth studying, which is why this variable is chosen as the **outcome** variable.
+- `reading_scores` was originally variable `v159_rawvalue`. By studying this variable, It is aimed to find the depth of correlation between violent crime rate and average grade level performance for 3rd graders on English Language Arts standardized tests, in order to derive a conclusion about how language test scores of a society at an early age indicate the violent crime rate.
+- `math_scores` was originally variable `v160_rawvalue`. By studying this variable, It is aimed to find the depth of correlation between violent crime rate and average grade level performance for 3rd graders on math tests, in order to derive a conclusion about how math education level of the younger population in a society affects the violent crime rate.
+- `limited_access_to_healthy_foods` was originally variable `v083_rawvalue`. Studying this variable will reveal the depth of correlation between percentage of population who are low-income and do not live close to a grocery store and violent crime rate. The relationship between a healthy diet and violent crime will be revealed. This variable is converted to a binary variable where `low` is for percentages below 6.77%, or `high` is for higher. 6.77% is chosen as It is the threshold that splits two categories as evenly as possible. It is logical to convert the percentage of people who cannot access to healthy foods as a binary variable as the values in between will not help me in this study.
+- `insufficient_sleep` was originally variable `v143_rawvalue`. The depth of correlation between percentage of adults who report fewer than 7 hours of sleep on average and violent crime rate will be examined. The relationship between healthy sleep schedule and violent crime will be revealed. This value is converted to a 3-category variable. `bottom` indicated percentage below 37.5%, `top` indicated percentage higher than 40% and `middle` is for the values in between. The values are chosen as they are the thresholds that splits three categories as evenly as possible. It is logical to have percentage of people who report they sleep less than 7 hours a day, because sleep is a continuous value and in this study I would like the include the data of people who get middle-ranged sleep time.
+
+## Proposal Requirement 3
+
+Printing the dataset created after these processes.
+
+```{r}
+chr_2021
+```
+
+## Proposal Requirement 4
+
+Printing a description of the created dataset.
+
+```{r}
+Hmisc::describe(chr_2021)
+```
+
+## Three Important Checks
+
+Checking if each of the five variables we selected has data for at least 75% of the counties in each state I plan to study. We can see in the summary that the variable with the most missing data is `reading_scores` with 2.39% missing data. A close second is `math_scores` with 2.12% and third `violent_crime` with 1.86% missing values of counties in each state. `limited_access_to_healthy_foods` is at 0.26% and `insufficient_sleep` has no missing values. Each variable selected has data for at least 75% of the counties in each state selected. The some variables with missing values will be summarized by state in the next step.
+
+```{r}
+chr_2021 %>% 
+    miss_var_summary()
+```
+
+### Missingness of `reading_scores` by state
+
+Summarizing the availability of `reading_scores` variable for each state we are interested in, It can be seen that for all states more than 75% of the data is available. Oregon is the state where the least data regarding `reading_scores` is available, but It is available by 82.7% which is above 75%. For California and Michigan, the data is available by more than 96% and all other states have full availability for the `reading_scores` variable data.
+```{r, message = FALSE}
+mosaic::favstats( reading_scores ~ state, data = chr_2021) %>%
+    select(state, n, missing) %>%
+    mutate(pct_available = 100*(n - missing)/n) %>%
+    kable()
+```
+### Missingness of `math_scores` by state
+
+When we summarize the availability of `math_scores` variable for each state we are interested in, It can be seen that for all states more than 75% of the data is available. Oregon is the state where the least data regarding `math_scores` is available, but It is available by 82.7% which is above 75%. For California and Michigan, the data is available by more than 97% and all other states have full availability for the `math_scores` variable data.
+```{r, message = FALSE}
+mosaic::favstats( math_scores ~ state, data = chr_2021) %>%
+    select(state, n, missing) %>%
+    mutate(pct_available = 100*(n - missing)/n) %>%
+    kable()
+```
+### Missingness of `limited_access_to_healthy_foods` by state
+
+Lastly, the availability of `limited_access_to_healthy_foods` variable for each state we are interested in is summarized. The data is 100% available for all states of interest, except Michigan. However, the data is available by 98.7% for Michigan which is way above 75%.
+
+```{r, message = FALSE}
+mosaic::favstats( limited_access_to_healthy_foods ~ state, data = chr_2021) %>%
+    select(state, n, missing) %>%
+    mutate(pct_available = 100*(n - missing)/n) %>%
+    kable()
+```
+
+### Checking Distinct Values
+Checking if the raw versions of each of the five selected variables must have at least 10 distinct non-missing values, which is also fine. We can see that outcome variable `violent_crime` has 369 distinct non-missing values, `reading_scores` has 368 distinct non-missing values, `math_scores` has 369 distinct non-missing values, `limited_access_to_healthy_foods` has 376 distinct non-missing values, and `insufficient_sleep` has 376 distinct non-missing values which are all above 10. This summary also shows how distinct the data is considering a tibble with 376 rows.
+
+```{r}
+chr_2021 %>% 
+    summarize(across(violent_crime:insufficient_sleep, ~ n_distinct(.)))
+```
+
+
+### Checking Categorical Variables' Levels
+Checking for each of the categorical variables you create, every level of the resulting factor includes at least 10 counties. 
+
+For the `limited_access_to_healthy_foods_cat` binary variable, we can see that both of 2 factors include about 187 counties which are above 10. However, there is a single data point which is a missing value and depicted as NA. This is negligible as It is only a single data point and will not affect the outcome of the binary variable.
+
+For the `insufficient_sleep_cat` multi-categorical variable, It can be seen that each level has 126 counties which are above 10.
+
+```{r}
+chr_2021 %>% tabyl(limited_access_to_healthy_foods_cat)
+chr_2021 %>% tabyl(insufficient_sleep_cat)
+```
+
+
+## Saving the Tibble
+
+```{r}
+saveRDS(chr_2021, file = "chr_2021_Cerag_Oguztuzun.Rds")
+```
+
+
+## Proposal Requirement 5
+
+The most challenging part of the work so far, was forming an interesting hypothesis and choosing the variables and states such that I have equally distributed data for each subgroup of my interest. For example, I was interested in studying education and health's role in violent crime rate, and I had to choose 2 variables from each area (education and health) that have a similar number of rows for me to achieve a confident conclusion. The same problem was also present when choosing states from each area of interest (Midwest, East Coast, West Coast), for me to do a comparison between areas at the end of the analyses part of the Project. I overcame this by looking at the number of rows and percentages of each combination of variables in my Project.
+
+
+# Analysis 1
+
+## The Variables
+`violent_crime` is the outcome variable, and describes the number of reported violent crime offenses per 100,000 population. `reading_scores` is the quantitative predictor variable, describes the average grade level performance for 3rd graders on English Language Arts standardized tests. The states that will be studied are California, Oregon, Ohio, Michigan, Florida, and South Carolina. 360 counties have complete cases for the predictor and outcome variables, as can be seen from the output of the `nrow` function. Lastly, the outcome value for **Cuyahoga County** is 645.9946, and the predictor value is 2.920717.
+```{r}
+chr_2021_a1 <- chr_2021 %>%
+    filter(complete.cases(reading_scores, violent_crime))
+
+nrow(chr_2021_a1)
+
+chr_2021_a1 %>%
+    filter(county == 'Cuyahoga County')
+```
+## Research Question
+
+What is the nature of the association between the average grade level performance for 3rd graders on English Language Arts standardized tests and the number of reported violent crime offenses, in 360 counties in the states of California, Oregon, Ohio, Michigan, Florida, and South Carolina?
+
+## Visualizing the Data
+
+From the scatter plot, the relationship between average grade level performance for 3rd graders on English Language Arts standardized tests and the number of reported violent crime offenses seems to be very close to linear with a considerable scatter around a generally linear relationship, which suggests there is high variance in the data. The variables are inversely proportional as the Pearson correlation coefficient is -0.45. Also, the Pearson correlation coefficient of -0.45 suggests that the relationship between the outcome and predictor variables can be described using a linear function. The loess smooth is close to the linear fit line except for a single outlier point.
+
+```{r}
+ggplot(chr_2021_a1, aes(x = reading_scores , y = violent_crime)) +
+    geom_point() +
+    theme_light() +
+    geom_smooth(method = "lm", formula = y ~ x,
+                col = "red", se = TRUE)+
+    geom_smooth(method = "loess", se = FALSE, 
+                col = "dodgerblue", formula = y ~ x) +
+    annotate("text", x = 3.5, y = 1000, col = "red",
+             label = paste("Pearson r = ", 
+                 signif(cor(chr_2021_a1$reading_scores, chr_2021_a1$violent_crime),2))) +
+    labs(title = "Predicting the Violent Crime Offenses given the Performance on Reading Tests", x = "Average % Grade Level Performance on Reading Tests", y = "# of Reported Violent Crime Offenses", subtitle = "Linear Fitted Line is shown in red and Loess Smooth is shown in blue")
+
+```
+
+## Transformation Assessment
+
+As can be seen from the initial visualization of the data, a single data point where the average percent grade-level performance on reading tests is smaller than 2, manipulates the loess smooth and disables the loess smooth to fit better to the linear fit line. In that sense, this outlier point is removed to get a better fit. Also, the only data point for when the average percent grade-level performance on reading tests is smaller than 2 is that observation, so there is a lack of data in that range, which could affect the fit of the curve.
+
+At first, I did not want to use a transformation after removing the outlier point, however, I tried using the BoxCox plot to get an estimated transformation parameter of 0.4304096, which suggested a square root transformation. After applying it, I observed a better fit, and the increase in the correlation coefficient from -0.4546111 to -0.4679496 after the transformation suggested a little stronger Pearson correlation. Hence, I decided to apply this transformation.
+
+To use the BoxCox plot, I changed the values of the outcome variable from 0 to 0.00001 for some counties. This makes sense regarding the It is (sadly) not possible to have 0 reported violent crimes in a County, also 0.00001 is still a small number regarding the general distribution of the number of violent crimes in other counties.
+
+```{r}
+chr_2021_a1 <- chr_2021_a1 %>% filter(reading_scores > 2)
+chr_2021_a1$violent_crime[chr_2021_a1$violent_crime == 0] <- 0.00001
+```
+
+```{r}
+boxCox(chr_2021_a1$violent_crime ~ chr_2021_a1$reading_scores) 
+powerTransform(chr_2021_a1$violent_crime ~ chr_2021_a1$reading_scores)
+```
+
+The Box-Cox plot peaks at the value λ = 0.4341803, which is close to λ = 0.5 that is present in Tukey's ladder of power transformations. So, the relationship between the square root of `violent_crime` and `reading_scores` will be examined in the comparative scatter plot below. After the transformation and removing an outlier, we can see that the loess smooth has a better linear fit, as the increase in the correlation coefficient from -0.4546111 to -0.4679496 after the transformation suggested a little stronger Pearson correlation. Also, there is less variance in data after the transformation as the data points around the fitted line are more condensed than before the transformation.
+
+```{r}
+p1 <- ggplot(chr_2021_a1, aes(x = reading_scores, y = violent_crime)) +
+    geom_point(size = 2) +
+    theme_light() +
+    geom_smooth(method = "loess", se = FALSE, 
+                formula = y ~ x, col = "dodgerblue") +
+    geom_smooth(method = "lm", se = FALSE, 
+                formula = y ~ x, col = "red", linetype = "dashed") +
+    labs(title = "Violent Crime Offensesgiven the \nPerformance on Reading Tests", x = "Average Performance on Reading Tests", y = "Violent Crime Offenses",subtitle = "Linear Fitted Line is shown in red and \nLoess Smooth is shown in blue")
+
+p2 <- ggplot(chr_2021_a1, aes(x = reading_scores, y = sqrt(violent_crime))) +
+    geom_point(size = 2) +
+    theme_light() +
+    geom_smooth(method = "loess", se = FALSE, 
+                formula = y ~ x, col = "dodgerblue") +
+    geom_smooth(method = "lm", se = FALSE, 
+                formula = y ~ x, col = "red", linetype = "dashed") +
+    labs(x = "Average Performance on Reading Tests", y = "Square Root of Violent Crime Offenses")
+
+p1 + p2
+```
+
+```{r}
+cor(chr_2021_a1$violent_crime, chr_2021_a1$reading_scores)
+cor(sqrt(chr_2021_a1$violent_crime), chr_2021_a1$reading_scores)
+```
+
+## The Fitted Model
+
+A linear model predicting the square root of the number of violent crimes on the basis of the average performance on reading tests, a quantitative variable, which yields the equation:
+
+```{r}
+model <- lm(sqrt(violent_crime) ~ reading_scores, data = chr_2021_a1)
+extract_eq(model, use_coefs = TRUE, coef_digits = 2)
+```
+
+The intercept value indicates that if average performance on reading tests did not affect the number of violent crimes, the number of violent crimes reported would be 44.75. The coefficient of the predictor variable indicates that a unit change in average performance on reading tests is related to the decrease in violent crime numbers with a factor of 9.27.
+
+As the normality assumption holds from the Normal Q-Q plot, and p-value of the F test done by ANOVA is 2.2e-16, which is against the hypothesis that the population variances are significantly the same. Hence, the Welch test will be used, in which having the same variance is not assumed but each population is assumed to follow a Normal distribution, just like the situation at hand. From the Welch test method, the confidence intervals around the coefficients of the fitted model are displayed as a 90% confidence interval for the slope of `reading_scores` that is within the interval of 13.46290 to 14.43523.
+
+```{r}
+anova(lm(sqrt(violent_crime) ~ reading_scores, data = chr_2021_a1))
+```
+
+```{r}
+chr_2021_a1 %$% t.test(sqrt(violent_crime),
+                  reading_scores,
+                  conf.level = 0.90, 
+                  alt = "two.sided")
+```
+
+The Pearson correlation of the predictor and outcome is -0.46795, meaning the relationship between violent crime numbers and average performance on reading tests can be described using a linear function with a slope of -0.46795. This suggests an inverse correlation between the predictor and outcome variables, meaning the violent crime number will decrease as the average performance on reading tests increase in a given county with the studied states. As the absolute value of the coefficient is not close to 1, the relationship is strong but not perfectly correlated.
+```{r}
+cor(sqrt(chr_2021_a1$violent_crime), chr_2021_a1$reading_scores) %>% kable(digits = 5)
+```
+
+Examining the R square value is giving the idea about how much of the variation in violent crime numbers can be explained by taking average performance on reading tests into account. It is 0.21898 and the adjusted R squared value is 0.21679, which suggests the fit is acceptable but will not yield a statistically significant result. We can see that the standard deviation is 4.93708 meaning 95% of the data is within the interval -9.87416 to 9.87416. This shows that the values are spread out broadly and are not close to the mean which is the expected value, this might indicate poor prediction.
+
+```{r}
+glance(model) %>% kable(digits = 5)
+```
+
+The residual summary will give a sense of the correction of the linear model. Looking at the minimum and maximum to get the largest prediction errors: the minimum is -17.0563 which means a violent crime number 17.0563 points too high for one county, was predicted, as well as a violent crime number is predicted 15.4259 points too low for one county. When examining the quantiles, the middle half of the predictions was between 2.8513 points too low and 7.2763 points too high. Additionally, the median which was expected to be around 0 to the center near 0, is 0.2009 points too high. All in all, the model predicted high violent crime numbers for the data provided.
+
+```{r}
+summary(model)
+```
+
+## Residual Analysis
+
+From the Residual Plot, we can see that the points are randomly distributed with a fuzzy football shape around the horizontal axis. This suggests that the linear regression model was more appropriate for this data than the nonlinear model would be. We can see that the smooth red line is close to being linear, which indicates the relationship is described well by the linear function. There are a few outliers indexed as 93, 311, 260, which have high residual values.
+
+When we check the normality of residuals using a Normal Q-Q plot, we can see that the residuals fit nicely to the diagonal line in the Normal Q-Q plot, which suggests a normal distribution with a minor right skew. If the residuals are normally distributed we can conclude that the confidence interval and model predictions mentioned above are valid.
+
+```{r}
+par(chr_2021_a1 = c(1,2))
+plot(model, which = c(1:2))
+```
+
+### Predicting Cuyahoga County's Violent Crime Number
+```{r}
+cuyahoga <- chr_2021_a1 %>% filter(county == "Cuyahoga County")
+cuyahoga %>% print(n=40)
+```
+
+Plugging the value 2.920717 which is Cuyahoga County's actual value of `reading_scores`, into the linear model equation:  
+$$
+\operatorname{\widehat{sqrt(violent\_crime)}} = 44.75 - 9.27(\operatorname{reading\_scores})
+$$
+$$
+\operatorname{\widehat{sqrt(violent\_crime)}} = 44.75 − 9.27 * (2.920717)
+$$
+$$
+\operatorname{\widehat{violent\_crime}} = 312.403978046
+$$
+$$
+\operatorname{{violent\_crime}} = 645.9946
+$$
+
+312.403978046 is the predicted value for the outcome variable `violent_crime` for Cuyahoga County. The actual value for the outcome variable was 645.9946. We can see that the actual value is almost twice as much as the predicted value, which means predicting the violent crime number of Cuyahoga County cannot be done successfully by using the average performance on reading tests.   
+
+### Counties with Least Success in Predicting the Violent Crime Number
+
+The largest residual is of Noble County in the state of Ohio, with residual -17.05634, which means It was estimated too high. The second-largest is Wallowa County in Oregon with a residual value of -15.94140, which means It was estimated too high again. This can be explained by their `violent_crime` value, which is the number of reported violent crime offenses. At the beginning of the analysis, the values of `violent_crime` which were 0 were changed to 0.00001 to be able to use the BoxCox. This made sense regarding the It is (sadly) not possible to have 0 reported violent crimes in a County, also 0.00001 is still a small number regarding the general distribution of the number of violent crimes in other counties. This is the case for two of the counties with the largest residuals. The `violent_crime` values of these counties could be misleading. Apart from that, the linear regression model was successful.
+
+```{r}
+model_a1_augment <- augment(model, data = chr_2021_a1)
+slice (model_a1_augment, c(260, 311, 93))
+```
+
+## Conclusions and Limitations
+
+The research question was revealing the nature of the association between the average grade level performance for 3rd graders on English Language Arts standardized tests and the number of reported violent crime offenses, in 360 counties in the states of California, Oregon, Ohio, Michigan, Florida, and South Carolina. The results showed that the number of reported violent crime offenses is inversely correlated to the average grade level performance for 3rd graders on English Language Arts standardized tests, which means the increase in average grade performance in reading tests indicate a lower violent crime number in the counties.
+
+The results of the linear regression model for predicting the outcome variable using a quantitative predictor variable which is `reading_scores` was a success. It revealed the inversely proportional relationship between these variables. The correlation was not perfect but neither a weak one, from the light of the analyses done above the inversely proportional relationship is reliable.
+
+Regarding regression assumptions, changing the `violent_crime` values from 0 to 0.00001 might be a wrong approach which increased the residual values. However, I did not want to remove the rows which had 0 values for the `violent_crime` variable and I thought It is meaningful to include them as having data with relatively small outcome variable values could make the analysis more explanatory. The target population was the Midwest, East Coast, and West Coast citizens of the USA. As these regions represent a large variety of the US population as they are geographically diverse, the states selected were successful in being a representative sample of the US as a whole. The distribution of states and the number of counties in each state were chosen in the data part of the study already.
+
+# Analysis 2 
+
+## The Variables
+
+`violent_crime` is the outcome variable, and describes the number of reported violent crime offenses per 100,000 population. Measures are based on the Uniform Crime Reporting and FBI from 2014 and 2016. `limited_access_to_healthy_foods_cat` is a binary categorical variable that will be used as the predictor variable in this analysis. It describes the percentage of the population who are low-income and do not live close to a grocery store. The states that will be studied are California, Oregon, Ohio, Michigan, Florida, and South Carolina. 368 counties have complete cases for the predictor and outcome variables, as can be seen from the output of the nrow function. Lastly, the outcome value for **Cuyahoga County** is 645.9946, and the predictor value is `low` which means It is within the interval of [0.0213, 6.85).
+
+
+```{r}
+chr_2021_a2 <- chr_2021 %>%
+    filter(complete.cases(limited_access_to_healthy_foods_cat, violent_crime))
+
+nrow(chr_2021_a2)
+
+chr_2021_a2 %>%
+    filter(county == 'Cuyahoga County')
+```
+## Research Question
+
+Do counties with a `high` or `low` percentage of the population who are low-income and do not live close to a grocery store,  show higher levels of reported violent crime offenses, in 368 counties in the states of California, Oregon, Ohio, Michigan, Florida, and South Carolina?
+
+## Visualizing the Data
+
+Square root transformation is applied to the outcome variable, as the original distribution which was checked using a Normal Q-Q plot and histograms, was right-skewed. The transformation represented data in a more normal form. 
+
+The Violin plot and the Normal Q-Q plot suggest that the model can be well-described with a Normal distribution. A minor right skew is observed for the data points where access to healthy foods is low. We can also observe it from the violin plot as the mean is greater than the median for the points where access to healthy foods is low, but they are the same for the values where the access is high.
+
+```{r}
+ggplot(chr_2021_a2, aes(x = limited_access_to_healthy_foods_cat, y = sqrt(violent_crime))) +
+  geom_violin(aes(fill = limited_access_to_healthy_foods_cat)) +
+  geom_boxplot(width = 0.3, outlier.size = 2, notch = T) +
+  stat_summary(fun = 'mean', geom = 'point', shape = 23, size = 3, fill = 'red') +
+  guides(fill = 'none') +
+  scale_fill_viridis_d(alpha = 0.5) +
+  theme_light() +
+  coord_flip() +
+  labs(x = "% of Population with Limited Access to Healthy Foods", y = '# of Violent Crimes', title = 'Predicting Violent Crime Offenses Predicted by Percent of Population with \nLimited Access to Healthy Foods', subtitle = 'Mean is shown by the red diamond.')
+```
+```{r}
+ggplot(chr_2021_a2, aes(sample = sqrt(violent_crime))) +
+  geom_qq(aes(col = limited_access_to_healthy_foods_cat)) + geom_qq_line(col = "black") +
+  facet_wrap(~ limited_access_to_healthy_foods_cat, labeller = "label_both") +
+  scale_color_viridis_d(option = "C", begin = 0.4, end = 0.7) +
+  theme_light() +
+  labs(y = "# of Violent Crimes",
+       x = "Expectations Under Normal Model",
+       title = "Normality of Violent Crime Offenses Predicted by Percent of Population with \nLimited Access to Healthy Foods") +
+  guides(col = "none")
+```
+
+
+## The Fitted Model
+
+A linear model predicting the square root of the number of violent crimes on the basis of the percentage of the population who are low-income and do not live close to a grocery store, a categorical binary variable, which yields the equation:
+
+```{r}
+model_a2 <- lm(sqrt(violent_crime) ~ limited_access_to_healthy_foods_cat, data = chr_2021_a2)
+extract_eq(model_a2, use_coefs = TRUE, coef_digits = 2)
+```
+
+The intercept value indicates that if the percentage of the population who are low-income and do not live close to a grocery store did not affect the number of violent crimes, the number of violent crimes reported would be 16.03. The coefficient of the predictor variable indicates that a unit change in the percentage of the population who are low-income and do not live close to a grocery store is related to the increase in violent crime numbers by a factor of 1.94.
+
+Additionally, If It is assumed that all values for other predictors are the same, a `high` percentage of the population who are low-income and do not live close to a grocery store, is predicted to have an outcome such that It is 1.94 points higher than a `low` percentage of the population who do not have access to healthy foods.
+
+From the Normal Q-Q plot of the residuals, we can assume the populations follow a Normal distribution. Also, from running an F-test to compare variances, a p-value of 0.6951 is yielded which suggests the population variances are significantly the same. Hence, pooled t-test will be used for building the confidence interval. From the tidy method, the confidence intervals around the coefficients of the fitted model are displayed as a 90% confidence interval for the slope of `limited_access_to_healthy_foods_cat` that is within the interval of 1.00 to 2.88.  
+```{r}
+res.ftest <- var.test(sqrt(violent_crime) ~ limited_access_to_healthy_foods_cat, data = chr_2021_a2)
+res.ftest
+```
+
+
+```{r}
+tidy(model_a2, conf.int = TRUE, conf.level = 0.90) %>% kable(digits = 2)
+```
+
+The Pearson correlation of the predictor and outcome is 0.17501, meaning the relationship between violent crime number and percentage of the population who are low-income and do not live close to a grocery store can be described using a linear function with a slope of 0.17501. This suggests a direct correlation between the predictor and outcome variables, meaning the violent crime number will increase as the percentage of the population who do not live close to a grocery store increase in a given county within the studied states. As the absolute value of the coefficient is more close to 0 as It is to 0.5, which indicates a very weak correlation.
+
+```{r}
+cor(sqrt(chr_2021_a2$violent_crime), as.numeric(chr_2021_a2$limited_access_to_healthy_foods_cat)) %>% kable(digits = 5)
+```
+
+Examining the R square value is giving the idea about how much of the variation in violent crime numbers can be explained by taking the percentage of the population who are low-income and do not live close to a grocery store into account. It is 0.03063 and the adjusted R squared value is 0.02798, which suggests the fit has a very weak effect size. This means that the percentage of the population who are low-income and do not live close to a grocery store is not a successful variable in predicting the violent crime number. We can see that the standard deviation is 5.4684 meaning 95% of the data is within the interval -10.9368 to 10.9368. This shows that the values are spread out broadly and are not close to the mean which is the expected value, this might indicate poor prediction.
+
+```{r}
+glance(model_a2) %>% kable(digits = 5)
+```
+
+
+The residual summary will give a sense of the correction of the linear model. Looking at the minimum and maximum to get the largest prediction errors: the minimum is -17.9705 which means a violent crime number 17.9705 points too high for one county, was predicted, as well as a violent crime number is predicted 16.7705 points too low for one county. When examining the quantiles, the middle half of the predictions was between 3.7886 points too low and 3.8560 points too high. Additionally, the median which was expected to be around 0 to the center near 0, is 0.1439 points too high. All in all, the model predicted high violent crime numbers for the data provided.
+
+To talk more on coefficients, if a county has a `high` percent of the population who cannot access healthy foods and have low income, this county is expected to have an outcome of the number of violent crimes 1.9387 points higher than counties that have `low` percent of the population who cannot access healthy foods and have low income. 
+
+```{r}
+summary(model_a2)
+```
+
+
+## Prediction Analysis
+
+From the Residual Plot, we can see that the data points are distributed in two locations regarding the data for predictor variable is binary. The data in two locations are distributed about zero. However, we can see outlier points in two of the categories which suggest that the residual value may be independent of the fitted value. But, the number of outliers is small so the model can be accepted to be used, the outliers are indexed as indexed 263, 319, 95, In addition, we can observe a constant variance as the majority of the points are distributed in the same range in two categories of `limited_access_to_healthy_foods_cat`.
+
+When we check the normality of residuals using a Normal Q-Q plot, we can see that the residuals fit nicely to the diagonal line in the Normal Q-Q plot, which suggests a normal distribution with a minor right skew. If the residuals are normally distributed we can conclude that the confidence interval and model predictions mentioned above are valid.
+
+
+```{r}
+par(chr_2021_a2 = c(1,2))
+plot(model_a2, which = c(1:2))
+```
+
+### Predicting Cuyahoga County’s Violent Crime Number
+
+```{r}
+cuyahoga <- chr_2021_a2 %>% filter(county == "Cuyahoga County")
+cuyahoga %>% print(n = Inf)
+```
+
+Plugging the value 0 to indicate `low` for Cuyahoga County's actual value of the binary variable `limited_access_to_healthy_foods_cat`, which was originally 4.292038, into the linear model equation:
+
+$$
+\operatorname{\widehat{sqrt(violent\_crime)}} = 16.03 + 1.94(\operatorname{limited\_access\_to\_healthy\_foods\_cat}_{\operatorname{high}})
+$$
+
+
+$$
+\operatorname{\widehat{sqrt(violent\_crime)}} = 16.03 + 1.94(\operatorname{0})
+$$
+
+
+$$
+\operatorname{\widehat{sqrt(violent\_crime)}} = 16.03
+$$
+$$
+\operatorname{\widehat{violent\_crime}} = 256.9609
+$$
+
+$$
+\operatorname{{violent\_crime}} = 645.9946
+$$
+
+
+256.9609 is the predicted value for the outcome variable `violent_crime` for Cuyahoga County. The actual value for the outcome variable was 645.9946. We can see that the actual value is almost triple the predicted value, which means predicting the violent crime number of Cuyahoga County cannot be done successfully by using the percent of the population who cannot access healthy foods and have low income. 
+
+### Counties with Least Success in Predicting the Violent Crime Number
+The largest residual is of Noble County in the state of Ohio, with a residual of 17.97045, equal to that is the Wallowa County in Oregon with the same residual value. Like in Analysis 1, this can be explained by their violent_crime value, which is the number of reported violent crime offenses. It is (sadly) not possible to have 0 reported violent crimes in a County, So, the `violent_crime` values of these counties could be misleading. This is the case for two of the counties with the largest residuals. Hence, the linear regression model was successful.
+
+```{r}
+model_a2_augment <- augment(model_a2, data = chr_2021_a2)
+slice (model_a2_augment, c(263, 319, 95))
+```
+
+## Conclusions and Limitations
+
+The research question was asking If `high` or `low` percentage of the population who are low-income and do not live close to a grocery store, show higher levels of reported violent crime offenses, in 368 counties in the states of California, Oregon, Ohio, Michigan, Florida, and South Carolina. A directly proportional and weak relationship is found between these variables. Counties with a high percentage of the population who are low-income and do not live close to a grocery store, show higher levels of reported violent crime offenses than counties with a low percentage of the population who are low-income. At first, It is counterintuitive, but violent crimes can be happening more in wealthy counties. However, this relationship is weak given the Pearson correlation coefficient was close to 0.
+
+My concerns regarding the limitations of this analysis included the data points where some counties had the outcome variable `violent_crimes` 0 in value. This is not feasible as a county cannot have 0 number of violent crimes which could affect the analysis results, however, I did not want to remove those counties because I wanted the data to have counties with relatively small violent crime numbers as well. Also, the `low` category in the predictor variable had a minor right skew, but It was assumed to be in normal distribution in this analysis due to the minority of the skew.
+
+# Analysis 3
+
+## The Variables
+
+`violent_crime` is the outcome variable, and describes the number of reported violent crime offenses per 100,000 population. `math_scores` is the quantitative predictor variable, describing the average grade level performance for 3rd graders on math standardized tests. The states that will be studied are California, Oregon, Ohio, Michigan, Florida, and South Carolina. 361 counties have complete cases for the predictor and outcome variables, as can be seen from the output of the nrow function. Lastly, the outcome value for Cuyahoga County is 645.9946, and the predictor value is 2.785789.
+
+```{r}
+chr_2021_a3 <- chr_2021 %>%
+    filter(complete.cases(math_scores, violent_crime))
+
+nrow(chr_2021_a3)
+
+chr_2021_a3 %>%
+    filter(county == 'Cuyahoga County')
+```
+
+## Research Question
+
+
+How well does the average grade level performance for 3rd graders on math standardized tests predict the number of reported violent crime offenses after accounting for differences between states?
+
+## Visualizing the Data
+
+Ohio is made the baseline, and this is checked by displaying the output of the levels function and seeing Ohio as the first state.
+```{r}
+chr_2021_a3 <- chr_2021 %>% mutate(state= relevel(state, ref = "OH")) %>% filter(complete.cases(math_scores, violent_crime))
+
+levels(chr_2021_a3$state) 
+```
+
+From the plot, a scatter plot for the counties of each state of interest is displayed. For each state, the relationship between math standardized tests and the number of reported violent crime offenses seems to be very close to linear with a considerable scatter around a generally linear relationship, which suggests there is high variance in the data. For each state, the slope is negative which suggests an inversely proportional relationship between the variables. For some states such as Florida and Ohio, a better linear fit line is observed, than some states such as South Carolina and Oregon which do not show much correlation as their slopes are close to 0.
+
+```{r}
+ggplot(data = chr_2021_a3, aes(x = math_scores, y = sqrt(violent_crime), col = state, group = state)) +
+    geom_point() +
+    theme_light() +
+    geom_smooth(method = "lm", formula = y ~ x,
+                col = "black", se = FALSE)+
+    geom_smooth(method = "loess", se = FALSE, 
+                col = "purple", formula = y ~ x) +
+    facet_wrap(~ state) +
+    labs(title = "Violent Crime Offenses given the Performance on Math Tests \nfor States of Interest", x = "Average Grade Level Performance on Math Tests", y = "# of Violent Crime Offenses", subtitle = "Linear Fitted Line is shown in black and Loess Smooth is shown in purple.")
+```
+
+## The Fitted Model
+
+A linear model predicting the square root of the number of violent crimes on the basis of the average performance on math tests, a quantitative variable, based on the states, yields the equation:
+
+```{r}
+model_a3 <- lm(sqrt(violent_crime) ~ math_scores * state, data = chr_2021_a3)
+extract_eq(model_a3, use_coefs = TRUE, coef_digits = 2, wrap = TRUE, terms_per_line = 2)
+```
+
+The intercept value indicates that if average performance on math tests did not affect the number of violent crimes, the number of violent crimes reported would be 39.42. The coefficient of the predictor variable indicates that a unit change in average performance on math tests is related to the decrease in violent crime numbers with a factor of 8.89.
+
+I thought of using the pooled t-test again as It is a robust test, regarding the distribution of residuals were uniform. However, from the ANOVA test, an F score of 1237.54 / 27.74 =  44.62, with a p-value of 0.00009162 which strongly rejects the equal variances of population samples were obtained which prevented me from using the pooled t-test. Adding onto that, the residuals have a uniform distribution, I used a method that didn't assume normality, bootstrapping. Using bootstrapping, a 90% confidence interval is calculated. From the mean difference for each group, the confidence interval is 303.6175 to 336.3897.
+
+Looking at intersection terms of `math scores` given different states, we can say that: average performance on math tests accounts for the decrease in violent crime number the most in the state of Florida and the least in Michigan and Oregon. Also, the average performance on math tests is directly proportional to the violent crime number, which means an increase in average performance on math tests indicate an increase in the number of violent crime in the counties of South Carolina.
+
+```{r}
+anova(lm(sqrt(violent_crime) ~ math_scores, data = chr_2021_a3))
+```
+
+```{r}
+set.seed(02112021)
+chr_2021_a3 %$% Hmisc::smean.cl.boot(violent_crime, B = 1000, conf.int = 0.90)
+
+```
+
+Examining the R square value is giving the idea about how much of the variation in violent crime numbers can be explained by taking average performance on reading tests into account. It is 0.5263086 and the adjusted R squared value is 0.5113785, which suggests the fit is acceptable but will yield a statistically significant result. The R squared value suggests that 50% of the outcome variable variability can be explained by the model. We can see that the standard deviation is 3.90299 meaning 95% of the data is within the interval -7.80598 to 7.80598. This shows that the values are spread out broadly but not as broad as It was in analysis 1 and 2. So, the data distribution is close to the mean which is the expected value, this might indicate a good prediction.
+
+```{r}
+glance(model_a3) %>% kable(digits = 5)
+```
+
+The residual summary will give a sense of the correction of the linear model. Looking at the minimum and maximum to get the largest prediction errors: the minimum is -12.7104 which means a violent crime number 12.7104 points too high for one county, was predicted, as well as a violent crime number is predicted 12.9629 points too low for one county. When examining the quantiles, the middle half of the predictions was between 2.1321 points too low and 2.4028 points too high. Additionally, the median which was expected to be around 0 to the center near 0, is 0.3136 points too high. All in all, the model predicted high violent crime numbers for the data provided.
+
+```{r}
+summary(model_a3)
+```
+
+## Residual Analysis
+
+From the Residual Plot, we can see that the points are randomly distributed with a fuzzy football shape around the horizontal axis. This suggests that the linear regression model was more appropriate for this data than the nonlinear model would be. From the horizontal line, we can see that the regression line does not match data points, but there are a few outliers indexed as 334, 261, 248, 202, which have high residual values.
+
+When we check the normality of residuals using a Normal Q-Q plot, we can see that the residuals do not fit the diagonal line in the Normal Q-Q plot, tails with different skews suggest a uniform distribution, where the data could be symmetric. If the residuals are not normally distributed we can conclude the p values will be unreliable. The linear regression model can still fit the data to predict the outcome variable regarding both Normal and Uniform distributions being symmetric.
+
+```{r}
+par(chr_2021_a3 = c(1,2))
+plot(model_a3, which = c(1:2))
+```
+
+### Predicting Cuyahoga County’s Violent Crime Number
+```{r}
+cuyahoga <- chr_2021_a3 %>% filter(county == "Cuyahoga County")
+cuyahoga %>% print(n = Inf)
+```
+
+Plugging 2.785789 for `math_scores` of Cuyahoga County, plugging 1 for `state` variables which are Ohio, into the linear regression equation:
+
+$$
+\begin{aligned}
+\operatorname{\widehat{sqrt(violent\_crime)}} &= 36.48 - 6.19(\operatorname{math\_scores})\ + \\
+&\quad 18.39(\operatorname{state}_{\operatorname{FL}}) - 2.18(\operatorname{state}_{\operatorname{MI}})\ + \\
+&\quad 2.94(\operatorname{state}_{\operatorname{OH}}) - 6.68(\operatorname{state}_{\operatorname{OR}})\ - \\
+&\quad 7.38(\operatorname{state}_{\operatorname{SC}}) - 4.54(\operatorname{math\_scores} \times \operatorname{state}_{\operatorname{FL}})\ - \\
+&\quad 0.06(\operatorname{math\_scores} \times \operatorname{state}_{\operatorname{MI}}) - 2.7(\operatorname{math\_scores} \times \operatorname{state}_{\operatorname{OH}})\ - \\
+&\quad 0.06(\operatorname{math\_scores} \times \operatorname{state}_{\operatorname{OR}}) + 3.59(\operatorname{math\_scores} \times \operatorname{state}_{\operatorname{SC}})
+\end{aligned}
+$$
+
+$$
+\begin{aligned}
+\operatorname{\widehat{sqrt(violent\_crime)}} &= 36.48 - 6.19(2.785789)\ + \\
+&\quad 18.39(0) - 2.18(0)\ + \\
+&\quad 2.94(1) - 6.68(0)\ - \\
+&\quad 7.38(0) - 4.54(0)\ - \\
+&\quad 0.06(0) - 2.7(2.785789)\ - \\
+&\quad 0.06(0) + 3.59(0)
+\end{aligned}
+$$
+
+
+$$
+\begin{aligned}
+\operatorname{\widehat{sqrt(violent\_crime)}} &= 11.71433579
+\end{aligned}
+$$
+
+$$
+\begin{aligned}
+\operatorname{\widehat{violent\_crime}} &= 137.225663001
+\end{aligned}
+$$
+
+
+$$
+\begin{aligned}
+\operatorname{{violent\_crime}} &= 645.9946
+\end{aligned}
+$$
+137.225663001 is the predicted value for the outcome variable violent_crime for Cuyahoga County. The actual value for the outcome variable was 645.9946. We can see that the actual value is almost 5 times the predicted value, which means predicting the violent crime number of Cuyahoga County cannot be done successfully by using the average performance on math tests.
+
+### Counties with Least Success in Predicting the Violent Crime Number
+
+Looking at these four outliers, we can see that they have very close absolute residual values. The largest residual is of Lucas County in the state of Ohio, with a residual of 12.96293, second to that is Wayne County in Michigan with the residual value of 12.82044. Both counties were predicted too low. Unlike the outliers in analysis 1 and 2, the `violent_crime` value for these counties are very high.
+
+```{r}
+model_a3_augment <- augment(model_a3, data = chr_2021_a3)
+slice (model_a3_augment, c(334, 261, 248, 202))
+```
+
+## Conclusions and Limitations
+
+The research question was investigating how well does the average grade level performance for 3rd graders on math standardized tests predicts the number of reported violent crime offenses after accounting for differences between states. Linear regression failed to succeed when the number of reported violent crime offenses was predicted by the average math test performance as a predictor variable for some states. 
+
+The p values for some states were close to 0 which did not reveal any relationship between variables. Some states showed an inverse correlation to the outcome variable, and some states displayed a directly proportional relationship. The residual plot did not satisfy the Normality assumption despite the transformation and displayed a uniform distribution. To sum up, all this inconsistency and failed assumptions lead me to conclude that math test performance is a bad and unreliable predictor to predict the number of reported violent crime offenses for each state. The outcome variable cannot be predicted well using the predictor variable `math_scores` after adjusting for the state effect.
+
+# Session Information
+
+
+```{r}
+sessionInfo()
+```
+
+

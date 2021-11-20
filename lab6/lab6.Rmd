@@ -1,0 +1,284 @@
+---
+title: "Cerag Oguztuzun: Lab 06 for 431"
+author: "Cerag Oguztuzun"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: yes
+    code_folding: show
+---
+
+```{r setup, include=FALSE, message = FALSE}
+knitr::opts_chunk$set(comment=NA)
+options(width = 70)
+```
+
+## Setup
+
+```{r load_packages, message = FALSE, warning = FALSE}
+library(car)
+library(knitr)
+library(rmdformats)
+library(equatiomatic)
+library(patchwork)
+library(janitor)
+library(magrittr)
+library(dplyr)
+library(naniar)
+library(broom)
+library(tidyverse)
+```
+## Background
+
+Lindner data is read and filtered to include only the patients who were alive at 6 months, and complete cases of the outcome variable `cardbill`. An id is added to each row to create easier referencing to patients. The resulting tibble has 970 rows, where 70% of the samples (679 samples) are partitioned to create a training set, and the rest of the samples will be treated as a test sample. Number of samples for each set is printed for confirmation.
+```{r}
+lindner <- readRDS("data/lab05_lind.Rds")
+```
+
+```{r}
+
+lindner_alive <- lindner %>%
+    filter(sixMonthSurvive == 1) %>%
+    mutate(id = row_number()) %>%
+    as_tibble()
+
+lindner_alive <- lindner_alive %>%
+    filter(complete.cases(cardbill))
+
+lindner_alive
+```
+
+```{r}
+set.seed(431)
+
+lindner_alive_train <- lindner_alive %>% sample_n(679)
+lindner_alive_test <- lindner_alive %>% anti_join( lindner_alive_train, by = 'id')
+cat("Number of rows of train set:", nrow(lindner_alive_train),"\n")
+cat("Number of rows of test set:", nrow(lindner_alive_test),"\n")
+```
+
+# Question 1
+The correlation coefficients without transformation, with squared root transformation and with log transformation of the linear relations are below. When we look at the differences between the coefficient without transformation and with either log or squared root transformation, we observe similar improvements on the correlation coefficient, which indicates the transformation is working in favor of this model. However we can see that log transformation of the outcome variable yields a better improvement, hence log transformation will be used on the outcome variable.
+```{r}
+cat("Correlation Coefficient without transformation:",cor(lindner_alive_train$cardbill, lindner_alive_train$ejecfrac),"\n")
+cat("Correlation Coefficient with sqrt transformation:",cor(sqrt(lindner_alive_train$cardbill), lindner_alive_train$ejecfrac),"\n")
+cat("Correlation Coefficient with log transformation:",cor(log(lindner_alive_train$cardbill), lindner_alive_train$ejecfrac),"\n")
+```
+
+A linear regression model is done with log transformation to the outcome variable `cardbill`, where a predictor variable `ejecfrac` is used, using the training data. We can see the equation of the linear regression model:
+```{r}
+model1 <- lm(log(cardbill) ~ ejecfrac, data = lindner_alive_train)
+extract_eq(model1, use_coefs = TRUE, coef_digits = 2)
+```
+
+The intercept value indicates that if `ejecfrac` did not affect the outcome variable, the `cardbill` would be 9.79. The coefficient of the predictor variable indicates that a unit change in `ejecfrac` is related to the decrease in `cardbill` with a factor of 0.01.
+
+
+# Question 2
+
+Another linear model is fitted using the training set, similar to `model1` but different because another variable `abcix` is added as a predictor variable. We can see the equation of the linear regression model:
+```{r}
+model2 <- lm(log(cardbill) ~ ejecfrac + abcix, data = lindner_alive_train)
+extract_eq(model2, use_coefs = TRUE, coef_digits = 4)
+```
+
+The intercept value indicates that if `ejecfrac` and `abcix` did not affect the outcome variable, the `cardbill` would be 9.6053. The coefficient of the predictor variable indicates that a unit change in `ejecfrac` is related to the decrease in `cardbill` with a factor of 0.0042, meaning they are weakly correlated when `abcix` is added to the model. The coefficient of the predictor variable indicates that a unit change in `abcix` is related to the increase in `cardbill` with a factor of 0.1802, they are directly correlated.
+
+
+# Question 3
+
+Another linear model is fitted, similar to `model2` but other variables `stent`, `height`, `female`, `diabetic`, `acutemi`, and `ves1proc` is added as a predictor variables. We can see the equation of the linear regression model:
+```{r}
+model3 <- lm(log(cardbill) ~ ejecfrac + abcix + stent + height + female + diabetic + acutemi + ves1proc, data = lindner_alive_train)
+extract_eq(model3, use_coefs = TRUE, coef_digits = 4)
+```
+The intercept value indicates that if `ejecfrac`, `abcix`, `stent`, `height`, `female`, `diabetic`, `acutemi` and `ves1proc`  did not affect the outcome variable, the `cardbill` would be 9.4968. 
+
+- The coefficient of the predictor variable indicates that a unit change in `ejecfrac` is related to the decrease in `cardbill` with a factor of 0.0049, meaning they are weakly inversely correlated. 
+
+- The coefficient of the predictor variable indicates that a unit change in `abcix` is related to the increase in `cardbill` with a factor of 0.1512, they are directly correlated.
+
+- The coefficient of the predictor variable indicates that a unit change in `stent` is related to the increase in `cardbill` with a factor of 0.1022, they are directly correlated.
+
+- The coefficient of the predictor variable indicates that a unit change in `height` is related to the decrease in `cardbill` with a factor of 3e-04, they are inversely correlated.
+
+- The coefficient of the predictor variable indicates that a unit change in `female` is related to the increase in `cardbill` with a factor of 0.0477, they are directly correlated.
+
+- The coefficient of the predictor variable indicates that a unit change in `diabetic` is related to the decrease in `cardbill` with a factor of 0.0071, they are inversely correlated.
+
+- The coefficient of the predictor variable indicates that a unit change in `acutemi` is related to the decrease in `cardbill` with a factor of 0.1183, they are inversely correlated.
+
+- The coefficient of the predictor variable indicates that a unit change in `ves1proc` is related to the increase in `cardbill` with a factor of 0.1037, they are directly correlated.
+
+Looking at the variance inflation factors (VIF), to quantify the impact of multicollinearity in this linear regression model, we can see that no VIF value is greater than 5. This indicates that the standard error of each coefficient is not too large than it would be if the variables were uncorrelated with the predictor. Hence, multicollinearity do not pose a problem for this model. 
+```{r}
+car::vif(model3)
+```
+
+# Question 4
+
+```{r}
+model4 <- lm(log(cardbill) ~ ejecfrac + abcix + stent + height * female + diabetic + acutemi + ves1proc, data = lindner_alive_train)
+extract_eq(model4, use_coefs = TRUE, coef_digits = 4)
+```
+The intercept value indicates that if `ejecfrac`, `abcix`, `stent`, `height`, `female`, `diabetic`, `acutemi`, `ves1proc` and the interaction variable of `female x height` did not affect the outcome variable, the `cardbill` would be 9.2352. 
+
+- The coefficient of the predictor variable indicates that a unit change in `ejecfrac` is related to the decrease in `cardbill` with a factor of 0.005, meaning they are weakly inversely correlated. 
+
+- The coefficient of the predictor variable indicates that a unit change in `abcix` is related to the increase in `cardbill` with a factor of 0.1499, they are directly correlated.
+
+- The coefficient of the predictor variable indicates that a unit change in `stent` is related to the increase in `cardbill` with a factor of 0.1004, they are directly correlated.
+
+- The coefficient of the predictor variable indicates that a unit change in `height` is related to the decrease in `cardbill` with a factor of 0.0012, they are inversely correlated.
+
+- The coefficient of the predictor variable indicates that a unit change in `female` is related to the increase in `cardbill` with a factor of 0.8227, they are directly correlated.
+
+- The coefficient of the predictor variable indicates that a unit change in `diabetic` is related to the decrease in `cardbill` with a factor of 0.0064, they are inversely correlated.
+
+- The coefficient of the predictor variable indicates that a unit change in `acutemi` is related to the decrease in `cardbill` with a factor of 0.1129, they are inversely correlated.
+
+- The coefficient of the predictor variable indicates that a unit change in `ves1proc` is related to the increase in `cardbill` with a factor of 0.1042, they are directly correlated.
+
+- The coefficient of the predictor variable indicates that a unit change in the interaction term of `height × female` is related to the decrease in `cardbill` with a factor of 0.0046, they are inversely correlated. This interaction term assesses the effect of variables `female` and `height` when they are correlated with each other.
+
+Looking at the variance inflation factors (VIF), to quantify the impact of multicollinearity in this linear regression model, we can see that no VIF value is greater than 5, except the `female` and `height x female` interaction term. This indicates that the standard error of the `female` and `height x female` variable coefficient are larger than It would be if these variables were uncorrelated with the other predictor variables. This causes concern as high value of VCF indicates that the variance of a coefficient is inflated by the multicollinearity in this regression model.
+
+
+```{r}
+car::vif(model4)
+```
+
+# Question 5
+
+4 models are fitted tested using the test set.
+
+```{r}
+lindner_alive_fitted_1 <- augment(model1, newdata = lindner_alive_test)
+lindner_alive_fitted_2 <- augment(model2, newdata = lindner_alive_test)
+lindner_alive_fitted_3 <- augment(model3, newdata = lindner_alive_test)
+lindner_alive_fitted_4 <- augment(model4, newdata = lindner_alive_test)
+
+```
+
+## Model 1
+
+From the Residual Plot, we can see that the points are not distributed with a fuzzy football shape around the horizontal axis. We can see that the smooth red line is close to being linear, which indicates the relationship is described well by the linear function. There are a few outliers indexed as 627, 89, 330, which have high residual values.
+
+When we check the normality of residuals using a Normal Q-Q plot, we can see a serious right skew in the distribution of the residuals. If the residuals are normally distributed we cannot ensure that the model predictions mentioned above are valid.
+
+```{r}
+par(lindner_alive_fitted_1 = c(1,2))
+plot(model1, which = c(1:2))
+```
+
+Examining the R square value is giving the idea about how much of the variation `cardbill` can be explained by taking the predictor variable `ejecfrac` into account. It is 0.01454 and the adjusted R squared value is 0.01308, which suggests the fit is not good as the model only explains about 10% of the variation within the data. Additionally AIC is 865.6485 and BIC is 879.2103 which are very high, this means the inclusion of the variable did not yield a good outcome for this model, however these values make more sense when they are compared, which will be done in the `Overall Comparison` section.
+```{r}
+glance(model1) %>% kable(digits = 5)
+```
+
+The RMSE (root mean square error) measures how much the predicted values by the model differ from the actual values, so It is a measure of error. The RMSE of `model1` is 18333.32. MAPE (mean absolute percentage error) and the maximum value of MAPE which is maxAPE measure the difference in predictions by the actual values in a percentage value. MAPE value is 15517.84 while the maxAPE value is 69262.42, which indicates the worst case percentage error.
+```{r}
+lindner_alive_fitted_1 <- lindner_alive_fitted_1 %>% mutate(res_cardbill = cardbill - .fitted)
+
+lindner_alive_fitted_1 %>%
+  summarise(MAPE = mean(abs(res_cardbill)),
+            maxAPE = max(abs(res_cardbill)),
+            RMSE = sqrt(mean(res_cardbill^2))) %>% knitr::kable()
+```
+
+
+## Model 2
+
+
+We can see that both the Residual and Normal Q-Q plot are similar to the plots of `model1`. From the Residual Plot, we can see that the points are not distributed with a fuzzy football shape around the horizontal axis. We can see that the red line is close to being linear, which indicates the relationship is described well by the linear function. There are a few outliers indexed as 627, 89, 330, which have high residual values.
+
+When we check the normality of residuals using a Normal Q-Q plot, we can see a serious right skew in the distribution of the residuals. If the residuals are normally distributed we cannot ensure that the model predictions mentioned above are valid.
+
+```{r}
+par(lindner_alive_fitted_2 = c(1,2))
+plot(model2, which = c(1:2))
+```
+
+Examining the R square value is giving the idea about how much of the variation `cardbill` can be explained by taking the predictor variable `ejecfrac` and `abcix` into account. It is 0.04591 and the adjusted R squared value is 0.04309, which suggests the fit is not good, but It explains more variation in the data than `model1` did. Additionally AIC is 845.6799 and BIC is 863.7624 which are very high, this means the inclusion of the variable did not yield a good outcome for this model. But, we can also see a decrease from the values of `model1`. 
+
+```{r}
+glance(model2) %>% kable(digits = 5)
+```
+
+
+The RMSE (root mean square error) measures how much the predicted values by the model differ from the actual values, so It is a measure of error. The RMSE of `model2` is 18333.31. MAPE (mean absolute percentage error) and the maximum value of MAPE which is maxAPE measure the difference in predictions by the actual values in a percentage value. MAPE value is 15517.84 while the maxAPE value is 69262.56, which indicates the worst case percentage error. We cannot see much change from `model1` with these values.
+```{r}
+lindner_alive_fitted_2 <- lindner_alive_fitted_2 %>% mutate(res_cardbill = cardbill - .fitted)
+
+lindner_alive_fitted_2 %>%
+  summarise(MAPE = mean(abs(res_cardbill)),
+            maxAPE = max(abs(res_cardbill)),
+            RMSE = sqrt(mean(res_cardbill^2))) %>% knitr::kable()
+```
+## Model 3
+
+Looking at the Residual Plot, the points are distributed with a fuzzy football shape around the horizontal axis. This suggests that the linear regression model was more appropriate for this data than the nonlinear model would be. We can see that the red line is close to being linear, which indicates the relationship is described well by the linear function. There are a few outliers indexed as 627, 89, 330, which have high residual values.
+
+When we check the normality of residuals using a Normal Q-Q plot, we can see a serious right skew in the distribution of the residuals. If the residuals are normally distributed we cannot ensure that the model predictions mentioned above are valid. This Normal Q-Q plot is similar to the Normal Q-Q plots of `model1` and `model2`.
+
+```{r}
+par(lindner_alive_fitted_3 = c(1,2))
+plot(model3, which = c(1:2))
+```
+
+
+R square value is giving the idea about how much of the variation `cardbill` can be explained by taking the predictor variables `ejecfrac`, `abcix`, `stent`, `height`, `female`, `diabetic`, `acutemi` and `ves1proc` into account. It is 0.0876 and the adjusted R squared value is 0.0767, which suggests the fit is not so good but It is better than `model2`'s R square values, which means we see an improvement with adding these predictor variables such that the model  can explain more of the variation within the data. Additionally AIC is 827.3447 and BIC is 872.5509 which are very high, this means the inclusion of the variable did not yield a good outcome for this model, but we see a decrease from the values from `model2`. 
+```{r}
+glance(model3) %>% kable(digits = 5)
+```
+
+
+The RMSE (root mean square error) measures how much the predicted values by the model differ from the actual values, so It is a measure of error. The RMSE of `model3` is 18333.31. MAPE (mean absolute percentage error) and the maximum value of MAPE which is maxAPE measure the difference in predictions by the actual values in a percentage value. MAPE value is 15517.83 while the maxAPE value is 69262.5, which indicates the worst case percentage error. We cannot see much change from `model1` or `model2` with these values.
+```{r}
+lindner_alive_fitted_3 <- lindner_alive_fitted_3 %>% mutate(res_cardbill = cardbill - .fitted)
+
+lindner_alive_fitted_3 %>%
+  summarise(MAPE = mean(abs(res_cardbill)),
+            maxAPE = max(abs(res_cardbill)),
+            RMSE = sqrt(mean(res_cardbill^2))) %>% knitr::kable()
+```
+## Model 4
+
+
+Looking at the Residual Plot, the points are distributed with a fuzzy football shape around the horizontal axis, same as `model3`. This suggests that the linear regression model was more appropriate for this data than the nonlinear model would be. We can see that the red line is close to being linear, which indicates the relationship is described well by the linear function. There are a few outliers indexed as 627, 89, 330, which have high residual values.
+
+When we check the normality of residuals using a Normal Q-Q plot, we can see a serious right skew in the distribution of the residuals. If the residuals are normally distributed we cannot ensure that the model predictions mentioned above are valid. This Normal Q-Q plot is similar to the Normal Q-Q plots of `model1`, `model2` and `model3`.
+
+```{r}
+par(lindner_alive_fitted_4 = c(1,2))
+plot(model4, which = c(1:2))
+```
+
+R square value is giving the idea about how much of the variation `cardbill` can be explained by taking the predictor variables `ejecfrac`, `abcix`, `stent`, `height`, `female`, `diabetic`, `acutemi`,`ves1proc` and `height x female` into account. It is 0.08899 and the adjusted R squared value is 0.07674, which is the best R squared values we have seen in all of the models, which means we see an improvement with adding an interaction term of `height x female`, the model can explain more of the variation within the data. Additionally AIC is 828.3048 and BIC is 878.0317 which is the lowest values we have seen in all models.
+```{r}
+glance(model4) %>% kable(digits = 5)
+```
+
+
+The RMSE (root mean square error) measures how much the predicted values by the model differ from the actual values, so It is a measure of error. The RMSE of `model3` is 18333.31. MAPE (mean absolute percentage error) and the maximum value of MAPE which is maxAPE measure the difference in predictions by the actual values in a percentage value. MAPE value is 15517.83 while the maxAPE value is 69262.5, which indicates the worst case percentage error. Which is same with `model1`, `model2` and `model3` with these values.
+```{r}
+lindner_alive_fitted_4 <- lindner_alive_fitted_4 %>% mutate(res_cardbill = cardbill - .fitted)
+
+lindner_alive_fitted_4 %>%
+  summarise(MAPE = mean(abs(res_cardbill)),
+            maxAPE = max(abs(res_cardbill)),
+            RMSE = sqrt(mean(res_cardbill^2))) %>% knitr::kable()
+```
+
+## Overall Comparison
+When we compare the models we cannot see almost any change in RMSE, MAPE or maxAPE values. This shows the measurement of error is pretty much the same for the fitted values using different models. and the target varies by the same amount from the predictions made by all models. This is weird because It shows working with different prediction values did not contribute to any change in the measurement of error. When we look at the R squared values for all models, then with the R square value of 0.08899, `model4` has the best R square value, which means `model4` could explain for the most variation in `cardbill` by taking the predictor variables. `model4` also has the best AIC value which is the lowest among all modes, `model4` having the lowest AIC means that this model is most likely the best model among other models with respect to the given `lindner` dataset. We can see that `model2` has the lowest BIC values.
+
+# Question 6 
+
+In accordance with this lab, I got information from Spiegelhalter Chapter 5 regarding residuals primarily. Firstly I read which is fitted is a line that makes the residual by choosing the least-squares that is the sum of squares of the residuals. This line plays the role of a prediction line and represents the mean values of pairs. Each line is a prediction model which is described mathematically with a linear equation in terms o the outcome variable and a linear combination of the predictor variables. Additionally, an error in statistical modeling does not refer to a mistake but It is referring to the inability of the generated model in predicting a dataset It has never been seen before, which can be the test dataset. I have also learned that when doing multiple linear regression If the coefficients of predictor variables change from when we did not do multiple linear regression, the reason for that is the existence of a dependency between those predictor variables.
+
+
+# Session Information
+```{r}
+sessioninfo::session_info()
+```
