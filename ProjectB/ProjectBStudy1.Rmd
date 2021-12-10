@@ -1,0 +1,486 @@
+---
+title: "Relationship between Marital Status and LDL"
+author: "Cerag Oguztuzun & Abhishek Bhardwaj"
+date: "`r Sys.Date()`"
+linkcolor: blue
+output:
+  rmdformats::readthedown:
+    highlight: kate
+    number_sections: true
+    code_folding: show
+    df_print: paged
+---
+
+```{r initial_setup, message = FALSE, warning = FALSE}
+library(olsrr)
+library(nhanesA)
+library(knitr); 
+library(rmdformats)
+library(janitor); 
+library(magrittr); 
+library(naniar)
+library(broom); 
+library(patchwork)
+library(GGally)
+library(rmarkdown)
+library(mosaic)
+library(readxl)
+library(Epi)
+library(car)
+library(equatiomatic)
+library(janitor)
+library(naniar)
+library(simputation)
+library(broom)
+library(Hmisc)
+library(tidyverse) 
+
+source("Love-boost.R")
+
+## Global options
+opts_chunk$set(comment=NA)
+opts_knit$set(width=75)
+theme_set(theme_bw())
+```
+
+# Setup and Data Ingest
+We have decided to use the NHANES data to analyze data on subjects from age 20-80 years of age. We did this because marital status data, which is our key predictor is available for only age 20 and above. In the next few steps, we selected the variables that we will be using for our analysis. We filtered these variables based on complete cases.
+
+## Ingest the data
+Here we have ingested the raw data files from NHANES.
+Five NHANES databases that we used are:
+
+- Demographics (DEMO_J) :	Demographic Variables and Sample Weights
+- Questionnaire (CDQ_J) : Cardiovascular Health
+- Laboratory (TRIGLY_J) : Cholesterol - Low-Density Lipoproteins (LDL) & Triglycerides
+- Examination (BPX_J): Blood Pressure
+- Questionnaire (DBQ_J): Diet Behavior & Nutrition
+
+```{r message = FALSE, warning = FALSE}
+demo_raw <- nhanes('DEMO_J') %>% tibble()
+cdq_raw <- nhanes('CDQ_J') %>% tibble()
+bpx_raw <- nhanes('TRIGLY_J') %>% tibble()
+exam_raw <- nhanes('BPX_J') %>% tibble()
+diet_raw <- nhanes('DBQ_J') %>% tibble()
+```
+
+# Cleaning the Data
+In the next few steps, we selected the variables that we will be using for our analysis. We filtered these variables based on complete cases.
+
+These variables are:
+From Questionnaire (DBQ_J), we want the following variables.
+
+- DBD895 : # of meals not home prepared [ignore 7777, 9999]
+
+```{r}
+diet_data <- diet_raw %>% 
+    select(SEQN, DBD895) %>%
+    filter(complete.cases(.))
+
+dim(diet_data) #no of observations
+```
+
+From Demographics, we want the following variables. Further we limited the data for age between 20 and 80 years. We did this because marital status data, which is our key predictor is available for only age 20 and above.
+
+- SEQN : Respondent sequence number
+- RIAGENDR : Gender
+- RIDAGEYR : Age in years at screening
+- RIDRETH1 : Race/Hispanic origin
+- DMDMARTL : Marital status (key predictor) [77, 99]
+
+```{r}
+demo_data <- demo_raw %>% 
+    select(SEQN, RIAGENDR, RIDAGEYR, RIDRETH1, DMDMARTL) %>%
+    filter (RIDAGEYR >= 20 & RIDAGEYR <= 80) %>%
+    filter(complete.cases(.))
+
+dim(demo_data) #no of observations
+```
+
+From Cardiovascular Health (CDQ_J) we selected shortness of breath as the variable to assess physical health
+
+- SEQN : Respondent sequence number
+- CDQ010 - Shortness of breath on stairs/inclines [9:Don't Know]
+
+```{r}
+cdq_data <- cdq_raw %>% 
+    select(SEQN, CDQ010) %>%
+    filter(complete.cases(.))
+
+dim(cdq_data) #no of observations
+```
+
+From Lab (TRIGLY_J), we selected the following variables. (filtered for 20 and above)
+
+- SEQN : Respondent sequence number
+- LBDLDL : LDL-Cholesterol, Friedewald (mg/dL) (outcome)
+```{r}
+bpx_data <- bpx_raw %>% 
+    select(SEQN, LBDLDL ) %>%
+    filter(complete.cases(.))
+
+dim(bpx_data) #no of observations
+
+bpx_data
+```
+
+From Exam (BPX_J), I want the following variables.
+
+- SEQN : Respondent sequence number
+- BPXSY1 : Systolic: Blood pres (1st rdg) mm Hg
+- BPXDI1 : Diastolic: Blood pres (1st rdg) mm Hg
+- BPXSY2:Systolic: Blood pres (2nd rdg) mm Hg
+
+```{r}
+exam_data <- exam_raw %>% 
+    select(SEQN, BPXSY1, BPXDI1, BPXSY2) %>%
+    filter(complete.cases(.))
+
+dim(exam_data) #no of observations
+```
+
+
+## Merging the Data
+Here we have merged all the variables into one dataset called "merged data" which has 1446 patients and 10 variables.
+
+```{r}
+temp1 <- left_join(demo_data, cdq_data, by = "SEQN") 
+temp2 <- left_join(temp1, bpx_data, by = "SEQN") 
+temp3 <- left_join(temp2, exam_data, by = "SEQN") 
+merged_data <- left_join(temp3, diet_data, by = "SEQN") %>%  filter(complete.cases(.))
+
+dim(merged_data)
+merged_data
+```
+
+
+```{r}
+dim(merged_data)
+
+mydata <- merged_data %>%
+    mutate(DMDMARTL = na_if(DMDMARTL, "77"),
+           DMDMARTL = na_if(DMDMARTL, "99"),
+           CDQ010 = na_if(CDQ010, "9"),
+           DBD895 = na_if(DBD895, "9999"),
+           DBD895 = na_if(DBD895, "5555"),
+           DBD895 = na_if(DBD895, "7777")) %>%
+    filter(complete.cases(.)) %>%
+    mutate(RIAGENDR = factor(RIAGENDR),
+           RIDRETH1 = factor(RIDRETH1),
+           DMDMARTL = factor(DMDMARTL),
+           CDQ010 = factor(CDQ010),
+           
+           DBD895 = as.numeric(DBD895),
+           SEQN = as.numeric(SEQN),
+           RIDAGEYR = as.numeric(RIDAGEYR),
+           LBDLDL = as.numeric(LBDLDL),
+           BPXSY1 = as.numeric(BPXSY1),
+           BPXDI1 = as.numeric(BPXDI1),
+           BPXSY2 = as.numeric(BPXSY2)) %>%
+  
+    rename(gender = RIAGENDR,
+           age = RIDAGEYR,
+           race = RIDRETH1,
+           marital_status = DMDMARTL,
+           shortness_of_breath = CDQ010,
+           ldl_chol = LBDLDL,
+           sbp  = BPXSY1,
+           dbp  = BPXDI1,
+           sbp2 = BPXSY2,
+           no_of_meals_not_homeprepared = DBD895 )
+
+dim(mydata)
+
+```
+
+## The Raw Data
+```{r}
+glimpse(mydata)
+```
+
+## Checking the Categorical Variables
+```{r}
+mydata %>% tabyl(gender)
+mydata <- mydata %>%
+  mutate(gender = fct_recode(gender, Male = '1', Female = '2'))
+```
+```{r}
+mydata %>% tabyl(race)
+
+mydata <- mydata %>%
+  mutate(race = fct_recode(race, Mexican_American = '1', Other_Hispanic = '2', Non_Hispanic_White = '3', Non_Hispanic_Black = '4', Other_Race = '5'))
+```
+```{r}
+mydata %>% tabyl(marital_status)
+mydata <- mydata %>%
+  mutate(marital_status = fct_recode(marital_status, Married = '1', Widowed = '2', Divorced = '3', Separated = '4', Never_married = '5', Living_with_partner = '6'))
+```
+```{r}
+mydata %>% tabyl(shortness_of_breath)
+mydata <- mydata %>%
+  mutate(shortness_of_breath = fct_recode(shortness_of_breath, Yes = '1', No = '2'))
+```
+
+```{r}
+
+glimpse(mydata)
+```
+
+## No of Subjects
+```{r}
+nrow(mydata)
+n_distinct(mydata %>% select(SEQN))
+```
+
+## The Complete Cases Tibble
+```{r}
+mydata
+```
+
+
+```{r}
+describe(mydata)
+```
+
+## Checking our Outcome and Key Predictor
+```{r}
+df_stats(~ marital_status + ldl_chol, data = mydata)
+```
+
+## Checking the Quantitative Predictors
+```{r}
+df_stats(~ age + ldl_chol + sbp + dbp + sbp2 + no_of_meals_not_homeprepared, data = mydata)
+```
+
+# Codebook and Data Description
+
+## Codebook
+This is a table listing all 11 variables that are included in our tibble, and providing some important information about them.
+
+Variable Name |Original Name | Data Type | Variable Type| Description
+---------|---------| ---------|---------|------------------------------------------------
+SEQN | SEQN     |	double | Quantitative | subject identification code
+gender | RIAGENDR |		factor | Categorical |Gender (Male/Female)
+age | RIDAGEYR |		double | Quantitative |Age in years at screening
+race | RIDRETH3 |		factor | Categorical |Race (7 categories- Mexican American, Other Hispanic, Non-Hispanic White, 	Non-Hispanic Black, Non-Hispanic Asian, Other Race - Including Multi-Racial)
+marital_status | DMDMARTL|	factor | Categorical | Marital status (6 categories- Married ,Widowed, Divorced, Separated , Never_married, Living_with_partner
+shortness_of_breath | CDQ010 |	factor | Categorical  | Shortness of breath on stairs/inclines 
+ldl_chol | LBDLDL | 	double | Quantitative |LDL-Cholesterol level, Friedewald (mg/dL) 
+sbp | BPXSY1 | 	double | Quantitative |Systolic: Blood pres (1st reading) mm Hg 
+dbp | BPXDI1 | 	double | Quantitative |Diastolic: Blood pres (1st reading) mm Hg sbp2| BPXSY2 | 	double | Quantitative |Systolic: Blood pres (2nd reading) mm Hg no_of_meals_not_homeprepared | DBD895 |	double | Quantitative | # of meals not home prepared 
+
+
+# Analysis A:Compare 2 Population Means using Paired Samples
+
+## Research question
+What is the relationship between the mean systolic blood pressure(sbp) at first reading and mean systolic blood pressure of the same subject at second reading (sbp2)?
+
+## Creating dataset
+First we created a tibble called "mydata_a" with only the paired samples needed for this analysis. We then created pairs and pivoted the data lengthwise to put all the first systolic blood pressure values in one column called "sbp" and the second column included second systolic blood pressure values "sbp2".
+
+```{r}
+
+mydata_a<-mydata %>%
+    select(sbp,sbp2)%>%
+  mutate(bpdiff=sbp-sbp2)%>%
+  mutate(pairs=row(.))
+
+
+mydata_afinal<-mydata_a%>%
+    pivot_longer(
+        cols = -c(pairs),
+        names_to = "BPtype",
+        values_to = "BP")
+
+favstats(~BP,BPtype,data=mydata_afinal)
+```
+
+## Describing the data
+Upon checking distribution of the difference in mean SBP, we see that the histogram shows normal distribution. There are multiple outliers noted on both sides of the distribution, but the data appears to be normally distributed without significant skew.
+The mean SBP at first reading is 131.1 with a SD of 20.8 and the mean SBP at second reading was 130.8 with a SD of 20.8 as well. 
+
+```{r}
+p1<-ggplot(data=mydata_a,aes(bpdiff))+
+  geom_histogram(aes(y=..density..),bins=90, fill = "royalblue",col = "gold")+
+  stat_function(fun = dnorm, 
+                args = list(mean = mean(mydata_a$bpdiff), sd = sd(mydata_a$bpdiff)),
+                col="red",lwd=1.5)+
+  theme_bw()
+
+p2 <- ggplot(mydata_a, aes(sample = bpdiff)) +
+  geom_qq(col = "slateblue") + geom_qq_line(col = "red")
+
+p3 <- ggplot(mydata_a, aes(x = "", y = bpdiff)) +
+  geom_violin(fill = "slateblue", alpha = 0.3) +
+  geom_boxplot(fill = "slateblue", width = 0.3,
+               outlier.color = "red") +
+  labs(x = "") + coord_flip()
+
+ p1 + p2 - p3 +
+  plot_layout(ncol = 1, height = c(3, 2)) +
+  plot_annotation(title = "Distribution of first and second SBP readings difference")
+
+```
+Since the data is normally distributed, paired t-test is appropriate
+
+```{r}
+mydata_a%$%t.test(bpdiff,conf.level=0.90)
+```
+
+## Conclusion
+
+There is a very small difference of 0.33 mmHg with a 90% CI of 0.09-0.57 between the first and the second reading of systolic blood pressure which is statistically significant. However this small value is not clinically relevant or significant.
+
+# Analysis B: Compare 2 Population Means using Independent Samples
+
+## Reasearch Question
+Is there a difference in average age between males and females in our study sample?
+
+## Creating dataset
+Here we have created another tibble called "mydata_b" with only the variables needed for this analysis.
+
+```{r}
+mydata_b<-mydata%>%
+  select(age,gender)
+str(mydata_b)
+```
+
+## Describing the data
+Upon checking distribution of the variable "age" in both the groups, we see that it is skewed. However, the variance between groups appears to be similar. Since the outcome was not normally distributed, we elected to do a bootstrap method to compare the mean age between males and females.
+
+```{r}
+ ggplot(mydata_b, aes(x = age, y = gender)) +
+  geom_violin(aes(fill = gender)) +
+  geom_boxplot(width = 0.3, outlier.size = 2, notch = T) +
+  stat_summary(fun = "mean", geom = "point",
+               shape = 23, size = 3, fill = "blue") +
+  guides(fill = "none") +
+  scale_fill_viridis_d(alpha = 0.4) +
+  coord_flip() +
+  labs(y = "Gender",
+       x = "Age",
+       title = "Difference in age according to gender")
+
+favstats(~age,gender,data=mydata_b)
+```
+## Main Analysis
+We decided to use the bootstrap method because we were not convinced that the sample was uniformly distributed.
+
+```{r}
+set.seed(431)
+mydata_b%$% bootdif(y = age, g = gender, conf.level = 0.90)
+```
+
+## Conclusion
+- In our sample, the mean age of men was 61.2 with sd of 11.74 and that of women was 60.51 with a sd of 11.64. At 90% confidence level, the difference in mean age between males and females was -0.69 years with a  90% confidence interval ranging from -1.67 to 0.30 yrs.  Since 0 is included in the interval, we conclude that at the 10% significance level, there is no statistically detectable difference between the two groups.
+
+
+# Analysis C: Comparing 3+ Population Means via ANOVA
+
+## Research question
+Is the mean ldl value different across the race in our sample?
+For analysis C, our quantitative outcome is ldl and our categorical predictor is race. 
+
+## Creating dataset
+Here we have created a tibble called "mydata_c" with only the variables required for this analysis.
+
+```{r}
+mydata_c<-mydata%>%
+  select(ldl_chol,race)
+str(mydata_c)
+```
+```{r}
+favstats(~ldl_chol,race,data=mydata_c)
+```
+
+## Summaries of outcome in each group
+From the favstats summary and the boxplot comparison of ldl of each race, it appears that the median LDL of white subjects is the lowest albeit with a small difference. There are also several outliers visible in all groups. However, these outliers are not out of the ordinary and we have seen these values in patients in real life. Therefore these were not removed from the analysis.
+
+```{r}
+ggplot(mydata_c,aes(x =race,y=ldl_chol)) +
+    geom_violin(aes(fill = race)) +
+    geom_boxplot(width = 0.3, outlier.size = 2,col="black") +
+    stat_summary(aes(fill = race), fun = mean,
+                 geom="point", pch = 21, size = 4) +
+    guides(fill = "none") + coord_flip()+
+  labs(y="LDL",x="Race",title="Boxplot comparison of LDL amongst different races")
+```
+
+## Difference in mean between groups
+Here we have created model 1 which is a linear model to check the difference in ldl between the races and we ran an anova on the model since we are checking differences between more than 2 groups. The anova model shows a F value of 1.61 and p of 0.16 which represents that there is no statistically detectable difference between the groups. 
+
+```{r}
+model1<-lm(ldl_chol~race, data=mydata_c)
+
+anova(model1)
+```
+```{r}
+tukey1<- mydata_c %$%
+    TukeyHSD(aov(ldl_chol~race),
+             ordered = TRUE, conf.level = 0.90)
+tukey1
+```
+
+```{r}
+par(las=1)
+par(mar=c(3,17,3,1))
+plot(tukey1)
+```
+
+```{r}
+par(mfrow = c(2,2)); plot(model1); par(mfrow = c(1,1))
+```
+
+## Residual analysis
+The residual analysis of model1 shows that the residuals follow a normal distribution and hence linear model was appropriate.
+
+## Conclusion
+ANOVA showed no significant difference in ldl between the different races. We made a TUKEY plot also and again no difference was seen between different groups.
+
+# Analysis D:Two-Way (2 x 2) Contingency Table
+The two categorical variables we chose for this analysis are 'shortness of breath' either when hurrying on the level or walking up a slight hill and high sbp defined as sbp > median sbp.
+
+## Research  Question
+Are subjects with SBP higher than the median systolic blood pressure more prone to have shortness of breath?
+
+## Creating dataset
+Here we have created a tibble called "temp1_ms" with the variables needed for this analysis.We converted the original variable of sbp into two levels (high/low) based on SBP> median as high and SBP< median as low.
+
+```{r}
+mydata <- mydata %>%
+  mutate(temp1_ms = case_when( sbp < median (sbp) ~ "low",
+                   TRUE ~ "high"),
+           temp1_ms = factor(temp1_ms))
+
+mosaic::favstats(sbp ~ temp1_ms, data = mydata) %>% 
+    kable(digits = 3)
+```
+
+## Checking that the new data has the desired results of only values as high/low
+```{r}
+glimpse (mydata)
+```
+
+## Main analysis
+Calculating the number of subjects under each category by creating a two by two table and then analyzing the data for relationship between high BP and shortness of breath.
+
+```{r}
+tabyl <-xtabs(~temp1_ms+shortness_of_breath,data=mydata)
+tabyl
+```
+```{r}
+tabyl <-xtabs(~temp1_ms+shortness_of_breath,data=mydata)
+tabyl
+twobytwo(287,463,242,434,"High BP","Not high BP","Shortness of breath","No shortness of breath",conf.level=0.90)
+```
+
+## Conclusion
+As can be seen above, although there is an association between High BP and shortness of breath based on RR of 1.06 and Odds Ratio of 1.09, it is not statistically significant because the confidence interval crossed 1 and also the p value is 0.41.
+
+
+# Session Information
+```{r}
+sessionInfo()
+```
+
+```

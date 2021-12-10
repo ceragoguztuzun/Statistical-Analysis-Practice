@@ -1,0 +1,771 @@
+---
+title: "Marital Status Contributing to LDL Cholesterol Levels"
+author: "Cerag Oguztuzun & Abhishek Bhardwaj"
+date: "`r Sys.Date()`"
+linkcolor: blue
+output:
+  rmdformats::readthedown:
+    highlight: kate
+    number_sections: true
+    code_folding: show
+    df_print: paged
+---
+
+```{r initial_setup, message = FALSE, warning = FALSE}
+library(olsrr)
+library(nhanesA)
+library(knitr)
+library(rmdformats)
+library(rmarkdown)
+library(GGally)
+library(patchwork)
+library(car)
+library(equatiomatic)
+library(janitor)
+library(magrittr)
+library(mosaic)
+library(naniar)
+library(simputation)
+library(broom)
+library(tidyverse) 
+
+```
+
+# Setup and Data Ingest
+We have decided to use the NHANES data to analyze data on subjects from age 20-80 years of age. We did this because marital status data, which is our key predictor is available for only age 20 and above. In the next few steps, we selected the variables that we will be using for our analysis. We filtered these variables based on complete cases.
+
+Here we have ingested the raw data files from NHANES.
+Five NHANES databases that we used are:
+
+- Demographics (DEMO_J) :	Demographic Variables and Sample Weights
+- Questionnaire (CDQ_J) : Cardiovascular Health
+- Laboratory (TRIGLY_J) : Cholesterol - Low-Density Lipoproteins (LDL) & Triglycerides
+- Examination (BPX_J) Blood Pressure
+- Questionnaire (DBQ_J) Diet Behavior & Nutrition
+
+```{r message = FALSE, warning = FALSE}
+demo_raw <- nhanes('DEMO_J') %>% tibble()
+cdq_raw <- nhanes('CDQ_J') %>% tibble()
+bpx_raw <- nhanes('TRIGLY_J') %>% tibble()
+exam_raw <- nhanes('BPX_J') %>% tibble()
+diet_raw <- nhanes('DBQ_J') %>% tibble()
+```
+
+# Preparing the Data
+
+From Questionnaire (DBQ_J), I want the following variables.
+
+- DBD895 : # of meals not home prepared 
+
+
+```{r}
+diet_data <- diet_raw %>% 
+    select(SEQN, DBD895) %>%
+    filter(complete.cases(.))
+
+dim(diet_data) #no of observations
+```
+
+From Demographics, I want the following variables.
+
+- SEQN : Respondent sequence number
+- RIAGENDR : Gender
+- RIDAGEYR : Age in years at screening
+- RIDRETH1 : Race/Hispanic origin
+- DMDMARTL : Marital status (key predictor) [77, 99]
+
+```{r}
+demo_data <- demo_raw %>% 
+    select(SEQN, RIAGENDR, RIDAGEYR, RIDRETH1, DMDMARTL) %>%
+    filter (RIDAGEYR >= 20 & RIDAGEYR <= 80) %>%
+    filter(complete.cases(.))
+
+dim(demo_data) #no of observations
+```
+
+
+Cardiovascular Health (CDQ_J)
+- SEQN : Respondent sequence number
+- CDQ010 - Shortness of breath on stairs/inclines [9:Don't Know]
+
+```{r}
+cdq_data <- cdq_raw %>% 
+    select(SEQN, CDQ010) %>%
+    filter(complete.cases(.))
+
+dim(cdq_data) #no of observations
+```
+
+From Lab (TRIGLY_J), I want the following variables. (filter for 20 and above)
+
+- SEQN : Respondent sequence number
+- LBDLDL : LDL-Cholesterol, Friedewald (mg/dL) (outcome)
+```{r}
+bpx_data <- bpx_raw %>% 
+    select(SEQN, LBDLDL ) %>%
+    filter(complete.cases(.))
+
+dim(bpx_data) #no of observations
+
+```
+
+From Exam (BPX_J), I want the following variables.
+
+- SEQN : Respondent sequence number
+- BPXSY1 : Systolic: Blood pres (1st rdg) mm Hg
+- BPXDI1 : Diastolic: Blood pres (1st rdg) mm Hg
+
+```{r}
+exam_data <- exam_raw %>% 
+    select(SEQN, BPXSY1, BPXDI1) %>%
+    filter(complete.cases(.))
+
+dim(exam_data) #no of observations
+```
+
+
+
+## Merging the Data
+```{r}
+temp1 <- left_join(demo_data, cdq_data, by = "SEQN") 
+temp2 <- left_join(temp1, bpx_data, by = "SEQN") 
+temp3 <- left_join(temp2, exam_data, by = "SEQN") 
+merged_data <- left_join(temp3, diet_data, by = "SEQN") %>%  filter(complete.cases(.))
+
+dim(merged_data)
+merged_data
+```
+# Cleaning the Data
+
+```{r}
+dim(merged_data)
+
+mydata <- merged_data %>%
+    mutate(DMDMARTL = na_if(DMDMARTL, "77"),
+           DMDMARTL = na_if(DMDMARTL, "99"),
+           DBD895 = na_if(DBD895, "5555"),
+           CDQ010 = na_if(CDQ010, "9"),
+           DBD895 = na_if(DBD895, "9999"),
+           DBD895 = na_if(DBD895, "7777")) %>%
+    filter(complete.cases(.)) %>%
+    mutate(RIAGENDR = factor(RIAGENDR),
+           RIDRETH1 = factor(RIDRETH1),
+           DMDMARTL = factor(DMDMARTL),
+           CDQ010 = factor(CDQ010),
+           
+           DBD895 = as.numeric(DBD895),
+           SEQN = as.numeric(SEQN),
+           RIDAGEYR = as.numeric(RIDAGEYR),
+           LBDLDL = as.numeric(LBDLDL),
+           BPXSY1 = as.numeric(BPXSY1),
+           BPXDI1 = as.numeric(BPXDI1),) %>%
+  
+    rename(gender = RIAGENDR,
+           age = RIDAGEYR,
+           race = RIDRETH1,
+           marital_status = DMDMARTL,
+           shortness_of_breath = CDQ010,
+           ldl_chol = LBDLDL,
+           sbp  = BPXSY1,
+           dbp  = BPXDI1,
+           no_of_meals_not_homeprepared = DBD895 )
+
+dim(mydata)
+
+```
+
+## The Raw Data
+```{r}
+glimpse(mydata)
+```
+
+## Checking our Outcome and Key Predictor
+```{r}
+df_stats(~ marital_status + ldl_chol, data = mydata)
+```
+
+## Checking the Quantitative Predictors
+```{r}
+df_stats(~ age + ldl_chol + sbp + dbp + no_of_meals_not_homeprepared, data = mydata)
+```
+
+## Checking the Categorical Variables
+```{r}
+mydata <- mydata %>%
+  mutate(gender = fct_recode(gender, Male = '1', Female = '2'))
+mydata %>% tabyl(gender)
+```
+```{r}
+mydata <- mydata %>%
+  mutate(race = fct_recode(race, Mexican_American = '1', Other_Hispanic = '2', Non_Hispanic_White = '3', Non_Hispanic_Black = '4', Other_Race = '5'))
+mydata %>% tabyl(race)
+```
+```{r}
+mydata <- mydata %>%
+  mutate(marital_status = fct_recode(marital_status, Married = '1', Widowed = '2', Divorced = '3', Separated = '4', Never_married = '5', Living_with_partner = '6'))
+mydata %>% tabyl(marital_status)
+```
+```{r}
+mydata <- mydata %>%
+  mutate(shortness_of_breath = fct_recode(shortness_of_breath, Yes = '1', No = '2'))
+mydata %>% tabyl(shortness_of_breath)
+```
+
+```{r}
+
+glimpse(mydata)
+```
+## No of Subjects
+```{r}
+nrow(mydata)
+n_distinct(mydata %>% select(SEQN))
+```
+
+## The Complete Cases Tibble
+```{r}
+mydata
+```
+
+# Codebook and Data Description
+This is a table listing all 10 variables that are included in our tibble, and providing some important information about them.
+
+Variable Name |Original Name | Data Type | Variable Type| Description
+---------|---------| ---------|---------|------------------------------------------------
+SEQN | SEQN     |	double | Quantitative | subject identification code
+gender | RIAGENDR |		factor | Categorical |Gender (Male/Female)
+age | RIDAGEYR |		double | Quantitative |Age in years at screening
+race | RIDRETH3 |		factor | Categorical |Race (7 categories- Mexican American, Other Hispanic, Non-Hispanic White, 	Non-Hispanic Black, Non-Hispanic Asian, Other Race - Including Multi-Racial)
+marital_status | DMDMARTL|	factor | Categorical | Marital status (6 categories- Married ,Widowed, Divorced, Separated , Never_married, Living_with_partner
+shortness_of_breath | CDQ010 |	factor | Categorical  | Shortness of breath on stairs/inclines 
+ldl_chol | LBDLDL | 	double | Quantitative |LDL-Cholesterol, Friedewald (mg/dL) 
+sbp | BPXSY1 | 	double | Quantitative |Systolic: Blood pres (1st rdg) mm Hg 
+dbp | BPXDI1 | 	double | Quantitative |Diastolic: Blood pres (1st rdg) mm Hg 
+no_of_meals_not_homeprepared | DBD895 |	double | Quantitative | # of meals not home prepared 
+
+# My Research Question
+How well does the marital status predict the LDL Cholesterol levels after accounting for differences in diet styles of married and unmarried people?
+
+# Partitioning the Data
+```{r}
+set.seed(12032021)
+
+data_training <- mydata %>% 
+  slice_sample(., prop = .70)
+data_test <- anti_join(mydata, data_training, by = "SEQN")
+
+dim(mydata)
+dim(data_training)
+dim(data_test)
+```
+
+# Transforming the Outcome
+## Visualizing the Outcome Distribution
+
+From the skew in the histogram and the tails of the Normal Q-Q plot, we can say that there is a concerning right skew. Hence, a transformation to give the distribution a more Normal shape will be considered in order to be able to assume a Normal distribution. We can also see one outlier from both the Normal Q-Q Plot and the histogram, but It is nothing to give concern.
+```{r}
+p1 <- ggplot(data = data_training, aes(x = ldl_chol)) +
+  geom_histogram(binwidth = 10, fill = "#c8a2c8", colour = "white") +
+  theme_light() +
+  labs(x = "LDL-Cholesterol (mg/dL)",
+       y = "Frequency",
+       title = "Distribution of the\nLDL-Cholesterol in our trial") +
+  theme_bw()
+
+p2 <- ggplot(data = data_training, aes(sample = ldl_chol)) +
+  geom_qq(colour = "#c8a2c8") +
+  theme_light() +
+  geom_qq_line() +
+  labs(x = "Theoretical LDL-Cholesterol",
+       y = "Actual LDL-Cholesterol",
+       title = "Normal Q-Q Plot of \nLDL-Cholesterol") +
+  theme_bw()
+
+p1 + p2
+```
+
+## Numerical Summary of the Outcome
+
+From the numerical summary of the outcome variable, we can see the confirmation of the right-skewness observation, as the mean is greater than the median. Additionally, we can see that the data for `ldl_chol` is between 18 and 354, which means the variable distribution is positive all the time in this study. Also, we don't see any missing data as we cleaned the data previously.
+```{r}
+favstats(~ ldl_chol, data = data_training)
+```
+
+## Numerical Summaries of the Predictors
+
+We can see the numerical summaries of the predictor variables from the tables. Predictors are either of type `factor` or `numeric`. The predictor variables consist of categorical and quantitative variables. The categorical variables are `gender`, `age`, `marital_status` and `shortness_of_breath`. We can see that we have an almost equal distribution of `males` and `females`, the race is mostly `Non_Hispanic_White`and more than half of the people in the study are `married`. The quantitative variables are `age`, `sbp`, `dbp`, `no_of_meals_not_homeprepared`. The age group is between 40 to 80. 
+```{r}
+data_training %>% select(-SEQN, -ldl_chol) %>% 
+  mosaic::inspect()
+```
+
+## Visualizations of Relationships between Predictors and the Outcome
+In this section, we will provide a visualization to illustrate the relationship between each predictor variable and the outcome variable. Numerical summaries will also be used for categorical variables.
+
+### Relationship between Gender and LDL Cholesterol
+The histogram of LDL-Cholesterol stratified by gender seems to follow a normal distribution, although we can see a small right skew It is not concerning. Also, from the numerical summaries, we can see that there are 3 more males in the study set than females, that's why we can see a higher peak point in the histogram of males than in females. Apart from that, the mean and median values are similar in females and males but females' mean and median values are higher than males'.
+```{r}
+ggplot(data = data_training, aes(x = ldl_chol, fill = gender)) + 
+    geom_histogram(color = "white", bins = 20) + 
+    labs(title = "Distribution of the LDL-Cholesterol, stratified by Gender",
+         x = "LDL-Cholesterol (mg/dL)") + 
+    guides(fill = "none") +
+  theme_light() +
+    facet_grid(gender ~ ., labeller = "label_both")
+```
+```{r}
+mosaic::favstats(ldl_chol ~ gender, data = data_training)
+
+data_training %>%
+    tabyl(gender) 
+```
+
+### Relationship between Age and LDL Cholesterol
+From the scatter plot, the relationship between age and the LDL-Cholesterol seems almost non-existent with a considerable scatter, which suggests there is high variance in the data. The variables are inversely proportional as the Pearson correlation coefficient is -0.17. Also, the Pearson correlation coefficient of -0.17 suggests that the relationship between the outcome and predictor variables cannot be described successfully using a linear function.
+```{r}
+ggplot(data = data_training, aes(x = age , y = ldl_chol)) +
+    geom_point(color = "#5c365c") +
+    geom_smooth(method = "lm", formula = y ~ x) +
+    theme_light() +
+    annotate("text", x = 70, y = 300, col = "red",
+             label = paste("Pearson r = ", 
+                 signif(cor(data_training$age, data_training$ldl_chol),2))) +
+    labs(title = "Relationship between Age and LDL Cholesterol",
+         y = "LDL-Cholesterol (mg/dL)",
+         x = "Age (years)")
+```
+
+
+### Relationship between Race and LDL Cholesterol
+From the plot, histograms for the races of people in the study group are displayed regarding LDL-Cholesterol values. We can see that distributions of all races are slightly right-skewed, but this can be assumed as Normal distribution because the numerical summary reveals that the mean values are greater than the median by a small amount. The study group consists of people of race `Non_Hispanic_White` the most, by 344 people which makes %34 of the study group. On the other hand, the min and max values for each race group are similar, meaning there isn't a specific outlier specific to a race.
+
+```{r}
+ggplot(data = data_training, aes(x = ldl_chol, fill = race)) + 
+    geom_histogram(color = "white", bins = 20) + 
+    labs(title = "Distribution of the LDL-Cholesterol, stratified by Race",
+         x = "LDL-Cholesterol (mg/dL)") + 
+  theme_light() +
+    facet_wrap(~ race)
+```
+```{r}
+mosaic::favstats(ldl_chol ~ race, data = data_training)
+
+data_training %>%
+    tabyl(race) 
+```
+
+### Relationship between Marital Status and LDL Cholesterol
+When we investigate the relationship between marital status and LDL Cholesterol, we can see that more than half of the study group is married. The percentage of people who have never married is very low (%7) which can be a disadvantage for our study as the group who are not married will not be represented by this data as much.
+```{r}
+ggplot(data = data_training, aes(x = ldl_chol, fill = marital_status)) + 
+    geom_histogram(color = "white", bins = 20) + 
+    labs(title = "Distribution of the LDL-Cholesterol, stratified by Marital Status",
+         x = "LDL-Cholesterol (mg/dL)") + 
+  theme_light() +
+    facet_wrap(~ marital_status)
+```
+```{r}
+mosaic::favstats(ldl_chol ~ marital_status, data = data_training)
+
+data_training %>%
+    tabyl(marital_status) 
+```
+
+### Relationship between Number of Meals not Home-prepared and LDL Cholesterol
+The scatter plot reveals the relationship between the number of meals not home-prepared in a week and the LDL-Cholesterol. The Pearson correlation coefficient is -0.014. This suggests that the relationship between the outcome and predictor variables cannot be described successfully using a linear function as the coefficient is very close to 0, we cannot identify a linear relationship between the variables.
+```{r}
+ggplot(data = data_training, aes(x = no_of_meals_not_homeprepared , y = ldl_chol)) +
+    geom_point(color = "#5c365c") +
+    geom_smooth(method = "lm", formula = y ~ x) +
+    theme_light() +
+    annotate("text", x = 15, y = 300, col = "red",
+             label = paste("Pearson r = ", 
+                 signif(cor(data_training$no_of_meals_not_homeprepared, data_training$ldl_chol),2))) +
+    labs(title = "Relationship between Number of Meals not Home-prepared and LDL Cholesterol",
+         y = "LDL-Cholesterol (mg/dL)",
+         x = "Number of Meals not Home-prepared (in 7 days)")
+```
+
+### Relationship between Shortness of Breath and LDL Cholesterol
+From the histograms stratified by shortness of breath in the study group, we can see that more people did not have a shortness of breath. 
+```{r}
+ggplot(data = data_training, aes(x = ldl_chol, fill = shortness_of_breath)) + 
+    geom_histogram(color = "white", bins = 20) + 
+    labs(title = "Distribution of the LDL-Cholesterol, stratified by Shortness of Breath",
+         x = "LDL-Cholesterol (mg/dL)") + 
+  theme_light() +
+    facet_wrap(~ shortness_of_breath)
+```
+
+
+```{r}
+mosaic::favstats(ldl_chol ~ shortness_of_breath, data = data_training)
+
+data_training %>%
+    tabyl(shortness_of_breath) 
+```
+
+### Relationship between SBP and LDL Cholesterol
+The scatter plot reveals the relationship between Systolic Blood Pressure and the LDL-Cholesterol. The Pearson correlation coefficient is 0.041. This suggests that the relationship between the outcome and predictor variables cannot be described successfully using a linear function as the coefficient is very close to 0. 
+```{r}
+ggplot(data = data_training, aes(x = sbp , y = ldl_chol)) +
+    geom_point(color = "#5c365c") +
+    geom_smooth(method = "lm", formula = y ~ x) +
+    theme_light() +
+    annotate("text", x = 200, y = 300, col = "red",
+             label = paste("Pearson r = ", 
+                 signif(cor(data_training$sbp, data_training$ldl_chol),2))) +
+    labs(title = "Relationship between Systolic Blood Pressure and LDL Cholesterol",
+         y = "LDL-Cholesterol (mg/dL)",
+         x = "Systolic Blood Pressure")
+```
+
+
+### Relationship between DBP and LDL Cholesterol
+The scatter plot reveals the relationship between Diastolic Blood Pressure and the LDL-Cholesterol. The Pearson correlation coefficient is 0.11. This is a slight direct proportion but the coefficient is very close to 0, so there is no strong relationship between the outcome and predictor variables in a linear way. However, we can see that Diastolic Blood Pressure is more correlated to LDL-Cholesterol than Systolic Blood Pressure is.
+```{r}
+ggplot(data = data_training, aes(x = dbp , y = ldl_chol)) +
+    geom_point(color = "#5c365c") +
+    geom_smooth(method = "lm", formula = y ~ x) +
+    theme_light() +
+    annotate("text", x = 90, y = 300, col = "red",
+             label = paste("Pearson r = ", 
+                 signif(cor(data_training$dbp, data_training$ldl_chol),2))) +
+    labs(title = "Relationship between Diastolic Blood Pressure and LDL Cholesterol",
+         y = "LDL-Cholesterol (mg/dL)",
+         x = "Diastolic Blood Pressure")
+```
+
+
+## Collinearity Checking
+Generalized Variance Inflation Factors (GVIF) will be examined in this section to get a sense of collinearity. We must check this to be sure that one predictor is not too highly correlated with other predictors, as this could decrease precision and interpretability. As no GVIF value of any variable is above 5, there is no serious multicollinearity problem.
+
+```{r}
+car::vif(lm(ldl_chol ~ gender + age + race + marital_status + no_of_meals_not_homeprepared + shortness_of_breath + sbp +dbp, 
+            data = data_training))
+```
+
+## `boxCox` function to assess the need for transformation of our outcome
+From the earlier Numerical Summary of the Outcome on the outcome variable `ldl_chol,` we can see that the minimum for this variable is 18, so the distribution consists of only the positive values. In the initial visualization of the data, we observed a right skew and mentioned that we considered doing a transformation. From the estimated transformation parameter which is 0.42, a value close to 0.5, we can use the square root transformation as suggested by the Tukey Ladder of Power Transformations.
+```{r}
+model_transformation <- lm(ldl_chol ~ gender + age + race + marital_status + no_of_meals_not_homeprepared + shortness_of_breath + sbp +dbp,
+                 data = data_training)
+
+boxCox(model_transformation)
+```
+```{r}
+powerTransform(model_transformation)
+```
+
+From the two plots that show the fit of `sbp` and `ldl_chol`, we don't see much change in the fit of the loess smooth and the linear fit. Hence, I wanted to re-do the 2 plots done to illustrate the distribution of the outcome variable, with the transformation. From the histogram and the Normal Q-Q plot, we can see that the right skew is gone and the data is not normally distributed after the square root transformation of the outcome variable.
+```{r}
+p1 <- ggplot(data_training, aes(x = sbp, y = ldl_chol)) +
+  geom_point(col = "#72c6ed") +
+  theme_light() +
+  geom_smooth(method = "loess", formula = y ~ x, se = FALSE) + 
+  geom_smooth(method = "lm", col = "red", formula = y ~ x, se = FALSE) +
+  labs(title = "LDL Cholesterol vs. Systolic \nBlood Pressure",
+       x = "Systolic Blood Pressure",
+       y = "LDL Cholesterol")
+
+p2 <- ggplot(data_training, aes(x = sbp, y = sqrt(ldl_chol))) +
+  geom_point(col = "#72c6ed") +
+  theme_light() +
+  geom_smooth(method = "loess", formula = y ~ x, se = FALSE) + 
+  geom_smooth(method = "lm", col = "red", formula = y ~ x, se = FALSE) +
+  labs(title = "Square Root of LDL Cholesterol \nvs. Systolic Blood Pressure",
+       x = "Systolic Blood Pressure",
+       y = "Square Root of LDL Cholesterol")
+
+p1 + p2
+```
+
+```{r}
+p1 <- ggplot(data = data_training, aes(x = sqrt(ldl_chol))) +
+  geom_histogram(binwidth = 1, fill = "#c8a2c8", colour = "white") +
+  theme_light() +
+  labs(x = "Square root of LDL-Cholesterol (mg/dL)",
+       y = "Frequency",
+       title = "Distribution of the LDL-Cholesterol \n in our trial with square Root Transformation") +
+  theme_bw()
+
+p2 <- ggplot(data = data_training, aes(sample = sqrt(ldl_chol))) +
+  geom_qq(colour = "#c8a2c8") +
+  theme_light() +
+  geom_qq_line() +
+  labs(x = "Theoretical LDL-Cholesterol",
+       y = "Actual LDL-Cholesterol",
+       title = "Normal Q-Q Plot of LDL-Cholesterol with square Root Transformation") +
+  theme_bw()
+
+p1 + p2
+```
+
+# The Big Model
+## Fitting/Summarizing the Kitchen Sink model
+
+The `model_big` model is the kitchen sink model where every variable we are working with is used in the multiple linear regression. This model predicts the LDL cholesterol of people between ages 20 to 80, based on the 8 predictor variables.  
+```{r}
+model_big <- lm(sqrt(ldl_chol) ~ gender + age + race + marital_status + no_of_meals_not_homeprepared + shortness_of_breath + sbp +dbp, 
+                data = data_training)
+```
+
+The Residual Standard Error for the big model is 1.748 which suggests the predictions are good. The R-square value is 0.06531 which is the square of the correlation coefficient which is the proportion of variance that can be explained by the big model. Lastly, the F-statistic is 4.598, as this is greater than 1, we can say that the data has high variability, which means the values in the dataset are not as consistent.
+```{r}
+summary(model_big)
+```
+
+## Effect Sizes: Coefficient Estimates
+
+The point estimates and confidence intervals are displayed. When we look at confidence levels where p values are less than 0.05, we can say that we are %90 confident that age is within the interval -0.0448	to -0.0240. We are also %90 confident that whether the gender is female is within the interval 0.1886 to 0.5727.
+```{r}
+tidy(model_big, conf.int = TRUE, conf.level = 0.90) %>% 
+  select(term, estimate, std.error, conf.low, conf.high, p.value) %>% 
+  kable(dig = 4)
+```
+
+## Describing the Equation
+A linear model predicting the square root of the LDL Cholesterol on the basis of all 8 of the predictor variables, yields the equation:
+```{r}
+extract_eq(model_big, use_coefs = TRUE, coef_digits = 4,
+           terms_per_line = 2, wrap = TRUE, ital_vars = TRUE)
+```
+The intercept value indicates that if gender, age, race, marital_status, no_of_meals_not_homeprepared, shortness_of_breath, sbp, dbp, did not affect the outcome variable, the ldl_chol would be 10.8267.
+
+- The coefficient of the predictor variable indicates that a unit change in whether gender is female is related to the increase in ldl_chol with a factor of 0.3807, meaning they are weakly positively correlated.
+
+- The coefficient of the predictor variable indicates that a unit change in age is related to the decrease in ldl_chol with a factor of 0.0344, they are negatively correlated.
+
+- The coefficient of the predictor variable indicates that a unit change in whether race is non hispanic white is related to the decrease in ldl_chol with a factor of 0.0688, a unit change in whether race is non hispanic black is related to the decrease in ldl_chol with a factor of 0.1121 and a unit change in whether race is other race is related to the decrease in ldl_chol with a factor of 0.0955.
+
+- The coefficient of the predictor variable indicates that a unit change in whether marital_status is widowed is related to the increase in ldl_chol with a factor of 0.0976, whether divorced positively correlated by 0.0633, whether separated positively correlated by 0.0633, never married negatively correlated by 0.3014 and living with partner is negatively correlated by 0.0327
+
+- The coefficient of the predictor variable indicates that a unit change in no_of_meals_not_homeprepared is related to the decrease in ldl_chol with a factor of 0.0097, they are negatively correlated.
+
+- The coefficient of the predictor variable indicates that a unit change in whether shortness_of_breath is not present is related to the increase in ldl_chol with a factor of 0.2205, they are positively correlated.
+
+- The coefficient of the predictor variable indicates that a unit change in sbp is related to the increase in ldl_chol with a factor of 0.0087, they are positively correlated.
+
+- The coefficient of the predictor variable indicates that a unit change in dbp is related to the increase in ldl_chol with a factor of 0.0046, they are positively correlated.
+
+# The Smaller Model
+
+In order to build a smaller model from the subset of the predictor variables used in the kitchen sink model, I tried using feature selection methods. I initially used the Backwards Stepwise Elimination, It suggested using the subset: `shortness_of_breath`, `sbp`, `gender`, `age`. As this subset does not consist out key predictor `marital_status`, I used another method, Best Subsets Regression. This yielded a number of possible subsets and their measurements such as R-Square. AIC, etc. I went for the model 5 with the highest adjusted R square value and lowest AIC value. Hence, the smaller model consists of the variables: `gender`, `age`, `marital_status`, `shortness_of_breath`, `sbp`. We can see that It is just what Backwards Stepwise Elimination yielded but our key predictor added to it.
+
+## Best Subsets Regression
+
+```{r}
+model <- lm(sqrt(ldl_chol) ~ gender + age + race + marital_status + no_of_meals_not_homeprepared + shortness_of_breath + sbp +dbp, data = data_training)
+ols_step_best_subset(model)
+```
+
+## Fitting the “small” model
+
+The `model_small` model is the smaller model where selected variables are used in the multiple linear regression. This model predicts the LDL cholesterol of people between ages 20 to 80, based on the 5 predictor variables. 
+
+The Residual Standard Error for the small model is 1.745 which suggests the predictions are slightly better than big model's predictions. The R-square value is 0.06347 which is the square of the correlation coefficient which is the proportion of variance that can be explained by the small model, and It is greater than the R-square value of the big model. Lastly, the F-statistic is 7.477, as this far greater than the big model's F-statistic value, we can say that the data has higher variability, which means the values in the dataset are not as consistent. This also means the small model will be able to take the likelihood of extreme values into account, better than the big model.
+```{r}
+model_small <- lm(sqrt(ldl_chol) ~ gender + age + marital_status + shortness_of_breath + sbp, data = data_training)
+
+summary(model_small)
+```
+## Effect Sizes: Coefficient Estimates
+Specify the size and magnitude of all coefficients, providing estimated effect sizes with 90% confidence intervals.
+
+```{r}
+tidy(model_small, conf.int = TRUE, conf.level = 0.90) %>% 
+  select(term, estimate, std.error, conf.low, conf.high, p.value) %>% 
+  kable(dig = 4)
+```
+
+## Small Model Regression Equation
+```{r}
+extract_eq(model_small, use_coefs = TRUE, coef_digits = 4,
+           terms_per_line = 2, wrap = TRUE, ital_vars = TRUE)
+```
+The intercept value indicates that if gender, age, marital_status, shortness_of_breath, sbp did not affect the outcome variable, the ldl_chol would be 11.0263.
+
+- The coefficient of the predictor variable indicates that a unit change in whether gender is female is related to the increase in ldl_chol with a factor of 0.3809, meaning they are weakly positively correlated.
+
+- The coefficient of the predictor variable indicates that a unit change in age is related to the decrease in ldl_chol with a factor of 0.0366, they are negatively correlated.
+
+- The coefficient of the predictor variable indicates that a unit change in whether marital_status is widowed is related to the increase in ldl_chol with a factor of 0.0722, whether divorced positively correlated by 0.0569, whether separated positively correlated by 0.1449, never married negatively correlated by 0.3181 and living with a partner is negatively correlated by 0.0344
+
+- The coefficient of the predictor variable indicates that a unit change in whether shortness_of_breath is not present is related to the increase in ldl_chol with a factor of 0.2193, they are positively correlated.
+
+- The coefficient of the predictor variable indicates that a unit change in sbp is related to the increase in ldl_chol with a factor of 0.0102, they are positively correlated.
+
+
+# In-Sample Comparison
+## Quality of Fit
+Examining the R square value is giving the idea about how much of the variation in LDL Cholesterol can be explained by taking predictor variables into account. It is larger for the big model, which suggests the fit is acceptable but will yield a statistically significant result. The R square value suggests that 6% of the outcome variable variability can be explained by the model. 
+
+We can see that the standard deviation is higher for the big model, 1.748	meaning 95% of the data is within the interval -3.496 to 3.496. This shows that the values are spread out broader than It was in the small model. So, for the small model the data distribution is close to the mean which is the expected value, this might indicate a good prediction.
+
+Lastly, the AIC and BIC values of the small model are smaller than the bigger model's values.
+```{r}
+temp_a <- glance(model_big) %>% 
+  select(-logLik, -deviance) %>%
+  round(digits = 3) %>%
+  mutate(modelname = "big")
+
+temp_b <- glance(model_small) %>%
+  select(-logLik, -deviance) %>%
+  round(digits = 3) %>%
+  mutate(modelname = "small")
+
+training_comp <- bind_rows(temp_a, temp_b) %>%
+  select(modelname, nobs, df, AIC, BIC, everything())
+
+training_comp
+```
+## Assessing Assumptions
+
+In this section, the residual plots for each model will be discussed.
+
+### Residual Plots for the Big Model
+From the Residuals vs Fitted Plot, we can see that the points are randomly distributed with a fuzzy football shape around the horizontal axis. This suggests we do not have a problem with the `constant variance` assumption.
+
+In the same plot, we do not see a serious curve in the horizontal line. Also, This suggests that the linear regression model was more appropriate for this data than the nonlinear model would be. Hence, the `linearity` assumption holds. 
+
+When we check the normality of residuals using a Normal Q-Q plot, we can see that the residuals fit the diagonal line in the Normal Q-Q plot, this satisfies the `normality` assumption. The only outlier that causes concern is indexed as 968, but It turns out that It was only one of the data points. So, we will not be concerning about the outlier.
+
+
+```{r}
+par(mfrow = c(2,2)); plot(model_big); par(mfrow = c(1,1))
+```
+
+### Residual Plots for the Small Model
+From the Residuals vs Fitted Plot, we can see that the points are randomly distributed with a fuzzy football shape around the horizontal axis. This suggests we do not have a problem with the assumption of `constant variance`.
+
+In the Residuals vs Fitted plot, we do not see a serious curve in the horizontal line. Also This suggests that the linear regression model was more appropriate for this data than the nonlinear model would be. Hence, the `linearity` assumption holds. 
+
+When we check the normality of residuals using a Normal Q-Q plot, we can see that the residuals fit the diagonal line in the Normal Q-Q plot, this satisfies the `normality` assumption. Also, we do not see any standardized residuals above 4 Cook's distance in the Residuals vs. Leverage plot, this is not causing a problem with the normality assumption as well. 
+
+
+```{r}
+par(mfrow = c(2,2)); plot(model_small); par(mfrow = c(1,1))
+```
+
+### Does collinearity have a meaningful impact?
+
+None of the variables pose a concerning collinearity problem, as no GVIF value is above or close to 5 in the big model. The small model consists of the subset of variables used in the big model, so collinearity will not be a problem for the smaller model as well.
+```{r}
+car::vif(model_big)
+```      
+
+### Comparing the Models
+In terms of residuals, we cannot distinguish a better fit in both models, as they both satisfy the assumptions of constant variance, linearity, and normality. However, we did see better R square and AIC, BIC values for the smaller model which makes the small model stand out from the performance of the big model.
+
+# Model Validation
+The small and big models will be validated using the test dataset, which was not used in the training process at all. Predictions will be square as a back transformation implementation, due to the fact that we used the square root transformation in our outcome variable.
+
+## Calculating Prediction Errors
+
+### Big Model: Back-Transformation and Calculating Fits/Residuals
+
+The head of the residuals by the validation using the big model is displayed. When we compare the columns `ldl_chol` as the true label of the test sample, and `ldl_chol_fit` as the predicted label for the test sample, we can see that It differs by the amount specified in the column `ldl_chol_res`.
+
+```{r}
+aug_big <- augment(model_big, newdata = data_test) %>% 
+  mutate(mod_name = "big",
+         ldl_chol_fit = .fitted^2,
+         ldl_chol_res = ldl_chol - ldl_chol_fit) %>%
+  select(SEQN, mod_name, ldl_chol, ldl_chol_fit, ldl_chol_res, everything())
+
+head(aug_big,3)
+```
+
+### Small Model: Back-Transformation and Calculating Fits/Residuals
+The head of the residuals by the validation using the small model are displayed. When we compare the columns `ldl_chol` as the true label of the test sample, and `ldl_chol_fit` as the predicted label for the test sample, we can see that It differs by the amount specified in the column `ldl_chol_res`.
+```{r}
+aug_small <- augment(model_small, newdata = data_test) %>% 
+  mutate(mod_name = "small",
+         ldl_chol_fit = .fitted^2,
+         ldl_chol_res = ldl_chol - ldl_chol_fit) %>%
+  select(SEQN, mod_name, ldl_chol, ldl_chol_fit, ldl_chol_res, everything())
+
+head(aug_small,3)
+```
+
+### Combining the Results
+We can observe the head of predicted values for LDL Cholesterol levels of the test sample for both big and small models. The predictions seem to be very close to each other. We need to use other evaluation metrics to assess each model's performance.
+```{r}
+test_comp <- union(aug_big, aug_small) %>%
+  arrange(SEQN, mod_name)
+
+test_comp %>% head()
+```
+
+## Visualizing the Predictions
+
+The predicted value visualization for each model also supports the point made in the previous section, that the models are making similar predictions that yield similar prediction errors. We can see that there is not a major difference between the two plots.
+```{r}
+ggplot(test_comp, aes(x = ldl_chol_fit, y = ldl_chol)) +
+  geom_point(color = "#c196c1") +
+    theme_light() +
+  geom_abline(slope = 1, intercept = 0, lty = "dashed", col = "#2b483a") + 
+  geom_smooth(method = "loess", col = "blue", se = FALSE, formula = y ~ x) +
+  facet_wrap( ~ mod_name, labeller = "label_both") +
+  labs(x = "Predicted LDL-Cholesterol (mg/dL)",
+       y = "Observed LDL-Cholesterol (mg/dL)",
+       title = "Observed vs. Predicted LDL-Cholesterol (mg/dL)",
+       subtitle = "Comparing Big to Small Model in Test Sample",
+       caption = "Dashed line is where Observed = Predicted")
+
+```
+
+## Summarizing the Errors
+
+The mean absolute prediction error (MAPE), the root mean square prediction error (RMSPE), and the maximum absolute error are displayed for big and small models. We can see that the big model is slightly lower on MAPE and RMSPE than the small model. Maximum absolute error is an exception to that. These models suggest an average error in predicting LDL Cholesterol using MAPE of more than 29 mg/dL which is definitely too high to be used in practical usage.
+```{r}
+test_comp %>%
+  group_by(mod_name) %>%
+  summarize(n = n(),
+            MAPE = mean(abs(ldl_chol_res)), 
+            RMSPE = sqrt(mean(ldl_chol_res^2)),
+            max_error = max(abs(ldl_chol_res)))
+```
+
+### Identify the largest errors
+
+We can see prediction with the highest maximum absolute error for both models. The error is slightly larger for the big model.
+```{r}
+temp1 <- aug_big %>%
+  filter(abs(ldl_chol_res) == max(abs(ldl_chol_res)))
+
+temp2 <- aug_small %>%
+  filter(abs(ldl_chol_res) == max(abs(ldl_chol_res)))
+
+bind_rows(temp1, temp2)
+```
+
+### Validated R-square values
+The square correlation between the predicted LDL Cholesterol and the actual LDL Cholesterol is  0.0513786 for the big model, and 0.04871754 for the small model. We can see that the R square value of the big model is larger than the small model. This was the case in the training set as well but the R square value for the big model was 0.065, which was more optimistic regarding the R square values of the test set.
+```{r}
+aug_big %$% cor(ldl_chol, ldl_chol_fit)^2
+aug_small %$% cor(ldl_chol, ldl_chol_fit)^2
+```
+
+## Comparing the Models
+The big model is selected instead of the small model by the small improvement we observed. The prediction error visualizations are similar to the small model, but the MAPE and RMSPE are slightly lower than the small model. Also, the R square is larger than the small model's R square value.
+
+# Discussion
+
+## Chosen Model
+The big model is chosen because the prediction error visualizations were similar to the small model, but the MAPE and RMSPE are lower than the small model and the R square is larger than the small model's R square value.
+
+## Answering the Research Question
+The LDL Cholesterol level is predicted by the variables age, race, gender, marital status, shortness of breath, systolic blood pressure, diastolic blood pressure, and the number of meals not home-prepared in one week.
+
+## Next Steps
+For the next steps, we might try fitting new models with other subsets of variables. We can choose other variables that reflect the lifestyle of people and we make sure that both the study groups we are interested in (married or not) are equally represented in the dataset.
+
+## Reflection
+I would choose another set of variables, which reflect the lifestyle differences between married and not married groups of people. I would also make sure that all groups in the key predictor (marital_status in our case) are equally represented. When some groups have more data than other groups, this can create a false bias which can perturb our predictions.
+
+# Session Information
+```{r}
+sessionInfo()
+```
+
+
